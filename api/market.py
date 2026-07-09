@@ -99,6 +99,10 @@ def parse_591_items(html: str, base_url: str) -> list[dict[str, str | int | floa
 
 
 def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | None]]:
+    card_items = parse_591_card_items(html)
+    if card_items:
+        return card_items
+
     pattern = re.compile(
         r'(?P<id>\d{7,9}),"(?P<title>[^"]{4,140})".{0,3500}?'
         r'"https:\\u002F\\u002Frent\.591\.com\.tw\\u002F(?P=id)",'
@@ -121,7 +125,7 @@ def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | Non
         layout = normalize_text(match.group("layout")) or infer_layout(title, community)
         ping = parse_float(match.group("ping"))
         rent = parse_int(match.group("rent"))
-        if not title or not rent:
+        if not title or not is_reasonable_monthly_rent(rent):
             continue
 
         items.append(
@@ -139,6 +143,116 @@ def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | Non
         if len(items) >= MAX_ITEMS:
             break
     return items
+
+
+def parse_591_card_items(html: str) -> list[dict[str, str | int | float | None]]:
+    blocks = split_591_item_blocks(html)
+    items: list[dict[str, str | int | float | None]] = []
+    seen_ids: set[str] = set()
+
+    for listing_id, block in blocks:
+        if listing_id in seen_ids:
+            continue
+        seen_ids.add(listing_id)
+
+        title = extract_591_title(block)
+        rent = extract_591_rent(block)
+        ping = extract_591_ping(block)
+        location = extract_591_location(block)
+        layout = extract_591_layout(block, title)
+        if not title or not is_reasonable_monthly_rent(rent):
+            continue
+
+        items.append(
+            {
+                "source": "591",
+                "title": title,
+                "address": location,
+                "rent": rent,
+                "ping": ping,
+                "layout": layout,
+                "url": f"https://rent.591.com.tw/{listing_id}",
+                "note": "591 搜尋頁刊登資料",
+            }
+        )
+        if len(items) >= MAX_ITEMS:
+            break
+
+    return items
+
+
+def split_591_item_blocks(html: str) -> list[tuple[str, str]]:
+    matches = list(re.finditer(r'<div class="item"\s+data-id="(?P<id>\d{7,9})"', html))
+    blocks: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else min(len(html), start + 50000)
+        blocks.append((match.group("id"), html[start:end]))
+    return blocks
+
+
+def extract_591_title(block: str) -> str:
+    title_match = re.search(r'<a[^>]+title="(?P<title>[^"]{2,180})"', block)
+    if title_match:
+        return clean_listing_title(title_match.group("title"))
+
+    alt_match = re.search(r'alt="(?P<alt>[^"]{4,240})"', block)
+    if alt_match:
+        alt = normalize_text(alt_match.group("alt"))
+        title = re.split(r"\s+(?:整層住家|獨立套房|分租套房|雅房|車位)\s+", alt)[0]
+        return clean_listing_title(title)
+    return ""
+
+
+def extract_591_rent(block: str) -> int | None:
+    alt_match = re.search(r'alt="[^"]*?月租\s*(?P<rent>[\d,]{3,8})\s*元/月', block)
+    if alt_match:
+        return parse_int(alt_match.group("rent"))
+
+    price_block = re.search(r'item-info-price.{0,900}?<div class="inline-flex-row"[^>]*>(?P<rent>[\d,]{3,8})</div>.{0,160}?元/月', block, re.S)
+    if price_block:
+        return parse_int(price_block.group("rent"))
+
+    text = normalize_text(block)
+    explicit = re.search(r"(?:月租|租金)\s*(?P<rent>[\d,]{3,8})\s*元/月", text)
+    if explicit:
+        return parse_int(explicit.group("rent"))
+    return None
+
+
+def extract_591_ping(block: str) -> float | None:
+    text = normalize_text(block)
+    candidates = [
+        parse_float(match.group(1))
+        for match in re.finditer(r"(?<!x)(\d+(?:\.\d+)?)\s*坪", text, re.I)
+    ]
+    filtered = [value for value in candidates if value and 1 <= value <= 300]
+    return filtered[0] if filtered else None
+
+
+def extract_591_location(block: str) -> str:
+    text = normalize_text(block)
+    matches = re.findall(r"[\u4e00-\u9fff]{1,4}區-[\u4e00-\u9fffA-Za-z0-9\-]{2,40}", text)
+    if matches:
+        return matches[-1]
+    alt_match = re.search(r'alt="(?P<alt>[^"]{4,240})"', block)
+    if alt_match:
+        alt = normalize_text(alt_match.group("alt"))
+        location_match = re.search(r"[\u4e00-\u9fff]{1,4}區-[\u4e00-\u9fffA-Za-z0-9\-]{2,40}", alt)
+        if location_match:
+            return location_match.group(0)
+    return ""
+
+
+def extract_591_layout(block: str, title: str) -> str:
+    text = normalize_text(f"{title} {block}")
+    for label in ("整層住家", "獨立套房", "分租套房", "雅房", "車位"):
+        if label in text:
+            return label
+    match = re.search(r"([1-6一二三四五六])房(?:[0-6一二三四五六]廳)?", text)
+    if match:
+        return match.group(0)
+    return ""
 
 
 def parse_591_text_items(html: str) -> list[dict[str, str | int | float | None]]:
@@ -160,7 +274,7 @@ def parse_591_text_items(html: str) -> list[dict[str, str | int | float | None]]
         seen_titles.add(title)
         rent = parse_int(match.group("rent"))
         ping = parse_float(match.group("ping"))
-        if not rent:
+        if not is_reasonable_monthly_rent(rent):
             continue
         items.append(
             {
@@ -351,6 +465,10 @@ def parse_int(value: str | None) -> int | None:
         return None
     digits = re.sub(r"[^\d]", "", value)
     return int(digits) if digits else None
+
+
+def is_reasonable_monthly_rent(value: int | None) -> bool:
+    return value is not None and 1000 <= value <= 500000
 
 
 def parse_float(value: str | None) -> float | None:
