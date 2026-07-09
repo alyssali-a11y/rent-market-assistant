@@ -215,11 +215,13 @@
       if (response.ok) {
         const payload = await response.json();
         const parsedRows = normalize591Rows(payload.items || []);
+        const moiRows = normalizeMoiRows(payload.moiItems || []);
         rows.push(...parsedRows);
-        if (parsedRows.length) {
-          setSourceStatus(`已讀取 ${parsedRows.length} 筆 591 外部待租物件。實價登錄仍以官方頁面查詢為準。`, "good");
+        rows.push(...moiRows);
+        if (parsedRows.length || moiRows.length) {
+          setSourceStatus(`已讀取 ${parsedRows.length} 筆 591 待租物件、${moiRows.length} 筆內政部租賃實價 Open Data。`, "good");
         } else {
-          setSourceStatus("已連線到 591，但本次條件沒有整理出可比物件；可放寬路段或改用行政區查詢。", "warn");
+          setSourceStatus("已連線外部來源，但本次條件沒有整理出可比物件；可放寬路段、坪數或格局條件。", "warn");
         }
       } else {
         setSourceStatus("本機外部資料服務未回應，請從右側開啟 591 與實價登錄查詢頁。", "warn");
@@ -228,9 +230,11 @@
       setSourceStatus("外部行情服務暫時無法回應，請稍後重試，或先從右側開啟 591 與實價登錄查詢頁。", "warn");
     }
 
-    rows.push(buildMoiStatusRow(currentCase));
     if (!rows.some((row) => row.sourceType === "591")) {
       rows.unshift(build591StatusRow(currentCase));
+    }
+    if (!rows.some((row) => row.sourceType === "MOI")) {
+      rows.push(buildMoiStatusRow(currentCase));
     }
     return rows;
   }
@@ -267,19 +271,35 @@
     };
   }
 
+  function normalizeMoiRows(items) {
+    return items.map((item) => ({
+      sourceType: "MOI",
+      sourceLabel: "內政部租賃實價",
+      title: item.title || "租賃成交案例",
+      address: item.address || "",
+      rent: parseNumber(item.rent),
+      ping: parseNumber(item.ping),
+      layout: item.layout || "",
+      url: item.url || els.moiLink.href,
+      note: item.note || "內政部租賃實價 Open Data",
+      pricePerPing: parseNumber(item.rent) && parseNumber(item.ping) ? Math.round(parseNumber(item.rent) / parseNumber(item.ping)) : null,
+      status: "已成交",
+    }));
+  }
+
   function buildMoiStatusRow(currentCase) {
     return {
       sourceType: "MOI",
-      sourceLabel: "內政部實價登錄",
-      title: "租賃實價官方查詢",
+      sourceLabel: "內政部租賃實價",
+      title: "Open Data 尚未取得成交案例",
       address: currentCase.address || [currentCase.city, currentCase.district].filter(Boolean).join(""),
       rent: null,
       ping: null,
       layout: currentCase.layout || "不限",
       url: els.moiLink.href,
-      note: "請在官方頁面切到租賃，貼上地址、路段或行政區；表格來源會明確標示為內政部實價登錄。",
+      note: "已嘗試讀取內政部租賃實價 Open Data；若沒有成交案例，請放寬路段或行政區條件。",
       pricePerPing: null,
-      status: "官方頁面",
+      status: "待查",
     };
   }
 
@@ -307,7 +327,7 @@
       pppMedian: median(ppps),
       rentCount: priced.length,
       source591Count: rows.filter((row) => row.sourceType === "591" && row.rent).length,
-      moiStatus: rows.some((row) => row.sourceType === "MOI") ? "官方頁面" : "未查",
+      moiCount: rows.filter((row) => row.sourceType === "MOI" && row.rent).length,
     };
   }
 
@@ -326,13 +346,13 @@
 
   function renderAnalysis(currentCase, rows, stats) {
     els.sampleCount.textContent = `${stats.source591Count} 筆`;
-    els.webCount.textContent = stats.moiStatus;
+    els.webCount.textContent = `${stats.moiCount} 筆`;
     els.pppValue.textContent = stats.pppMedian ? `${formatMoney(stats.pppMedian)}／坪` : "－";
     els.sampleScope.textContent = buildSearchKeyword(currentCase) || "請輸入地址";
 
     if (stats.low && stats.high) {
       els.recommendedBand.textContent = `${formatMoney(roundToHundred(stats.low))}～${formatMoney(roundToHundred(stats.high))}`;
-      els.recommendedNote.textContent = "以 591 可讀取待租物件為主，實價登錄作官方查證";
+      els.recommendedNote.textContent = "綜合 591 待租價與內政部租賃成交價";
     } else {
       els.recommendedBand.textContent = "需查外部頁";
       els.recommendedNote.textContent = "目前沒有可自動計算的 591 租金資料";
@@ -347,21 +367,21 @@
 
   function getConfidence(stats, currentCase) {
     if (!currentCase.address) return { level: "neutral", label: "等待輸入" };
-    if (stats.source591Count >= 6) return { level: "good", label: "591 樣本充足" };
-    if (stats.source591Count >= 2) return { level: "warn", label: "可先報區間" };
+    if (stats.source591Count + stats.moiCount >= 6) return { level: "good", label: "外部樣本充足" };
+    if (stats.source591Count + stats.moiCount >= 2) return { level: "warn", label: "可先報區間" };
     return { level: "risk", label: "需查外部頁" };
   }
 
   function buildTalkTrack(currentCase, stats) {
     if (!currentCase.address) {
-      return "輸入地址後，先開 591 與實價登錄官方頁，現場以外部行情作為主要說法。";
+      return "輸入地址後，系統會先讀取 591 待租物件與內政部租賃實價 Open Data，現場以外部行情作為主要說法。";
     }
     if (!stats.low || !stats.high) {
-      return "目前尚未取得足夠的 591 租金數字。建議先按右側 591 與內政部實價登錄連結，確認同路段、同格局、同坪數的租金，再對屋主說明要以外部公開行情為準。";
+      return "目前尚未取得足夠的外部租金數字。建議先按右側 591 與內政部實價登錄連結，確認同路段、同格局、同坪數的租金，再對屋主說明要以外部公開行情為準。";
     }
 
     const band = `${formatMoney(roundToHundred(stats.low))} 到 ${formatMoney(roundToHundred(stats.high))}`;
-    return `依 591 目前可讀取的周邊待租物件，這類條件可先抓 ${band} 元／月；再用內政部實價登錄租賃資料確認成交租金，向屋主說明刊登價與實際成交價可能會有落差。`;
+    return `依 591 目前周邊待租價與內政部租賃實價成交資料，這類條件可先抓 ${band} 元／月；向屋主說明刊登價會略高於成交價，建議用外部公開行情作為定價依據。`;
   }
 
   function renderRows(rows) {
@@ -389,7 +409,7 @@
   }
 
   function renderEmptyRows() {
-    els.matchesBody.innerHTML = '<tr><td class="empty-row" colspan="5">輸入地址後，這裡會顯示 591 與實價登錄來源。</td></tr>';
+    els.matchesBody.innerHTML = '<tr><td class="empty-row" colspan="5">輸入地址後，這裡會顯示 591 待租物件與內政部租賃實價 Open Data。</td></tr>';
   }
 
   function updateLinks() {
@@ -442,7 +462,7 @@
     updateLinks();
     renderEmptyRows();
     renderAnalysis(getCase(), [], buildExternalStats(getCase(), []));
-    setSourceStatus("按下產生建議後，系統會先嘗試讀取 591 搜尋結果；實價登錄目前以官方查詢頁為準。", "");
+    setSourceStatus("按下產生建議後，系統會讀取 591 搜尋結果與內政部租賃實價 Open Data。", "");
   }
 
   async function copyCurrentAddress() {

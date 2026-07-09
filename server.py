@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import csv
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from api.market import fetch_text, first, parse_591_items
+from api.market import (
+    MOI_OPEN_DATA_URL,
+    fetch_text,
+    first,
+    parse_591_items,
+    parse_float,
+    parse_moi_rental_items,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -28,7 +36,12 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_market(self, query: str) -> None:
         params = parse_qs(query)
         region = first(params, "region")
-        keyword = first(params, "keyword") or first(params, "district") or first(params, "address")
+        city = first(params, "city")
+        district = first(params, "district")
+        address = first(params, "address")
+        layout = first(params, "layout")
+        ping = parse_float(first(params, "ping"))
+        keyword = first(params, "keyword") or district or address
         list_params = {}
         if region:
             list_params["region"] = region
@@ -38,13 +51,30 @@ class Handler(SimpleHTTPRequestHandler):
         if list_params:
             url += "?" + urlencode(list_params)
 
+        items = []
+        moi_items = []
+        errors = {}
         try:
             html = fetch_text(url)
             items = parse_591_items(html, url)
-            payload = {"ok": True, "source": "591", "queryUrl": url, "items": items}
-            self.send_json(payload, 200)
         except (TimeoutError, URLError, OSError) as exc:
-            self.send_json({"ok": False, "source": "591", "queryUrl": url, "items": [], "error": str(exc)}, 502)
+            errors["591"] = str(exc)
+
+        try:
+            moi_items = parse_moi_rental_items(city, district, address, keyword, layout, ping)
+        except (TimeoutError, URLError, OSError, csv.Error, ValueError) as exc:
+            errors["MOI"] = str(exc)
+
+        payload = {
+            "ok": not errors,
+            "source": "external",
+            "queryUrl": url,
+            "openDataUrl": MOI_OPEN_DATA_URL,
+            "items": items,
+            "moiItems": moi_items,
+            "errors": errors,
+        }
+        self.send_json(payload, 200 if not errors or items or moi_items else 502)
 
     def send_json(self, payload: dict, status: int) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

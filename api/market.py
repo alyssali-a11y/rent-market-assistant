@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
 from html import unescape
@@ -10,6 +12,35 @@ from urllib.request import Request, urlopen
 
 
 MAX_ITEMS = 12
+MOI_OPEN_DATA_URL = "https://plvr.land.moi.gov.tw/DownloadOpenData"
+MOI_DOWNLOAD_ROOT = "https://plvr.land.moi.gov.tw/Download"
+MOI_CSV_CACHE: dict[str, str] = {}
+MOI_CITY_CODES = {
+    "基隆市": "c",
+    "台北市": "a",
+    "臺北市": "a",
+    "新北市": "f",
+    "桃園市": "h",
+    "新竹市": "o",
+    "新竹縣": "j",
+    "苗栗縣": "k",
+    "台中市": "b",
+    "臺中市": "b",
+    "南投縣": "m",
+    "彰化縣": "n",
+    "雲林縣": "p",
+    "嘉義市": "i",
+    "嘉義縣": "q",
+    "台南市": "d",
+    "臺南市": "d",
+    "高雄市": "e",
+    "屏東縣": "t",
+    "宜蘭縣": "g",
+    "花蓮縣": "u",
+    "台東縣": "v",
+    "臺東縣": "v",
+    "澎湖縣": "x",
+}
 
 
 def normalize_text(value: str) -> str:
@@ -19,17 +50,42 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", unescape(value)).strip()
 
 
-def fetch_text(url: str) -> str:
+def normalize_address(value: str) -> str:
+    return (
+        normalize_text(value)
+        .replace("臺", "台")
+        .replace("０", "0")
+        .replace("１", "1")
+        .replace("２", "2")
+        .replace("３", "3")
+        .replace("４", "4")
+        .replace("５", "5")
+        .replace("６", "6")
+        .replace("７", "7")
+        .replace("８", "8")
+        .replace("９", "9")
+    )
+
+
+def compact_address(value: str) -> str:
+    return re.sub(r"[\s　,，。．.、之\-號号樓楼層层]", "", normalize_address(value))
+
+
+def fetch_bytes(url: str, referer: str = "https://rent.591.com.tw/") -> bytes:
     request = Request(
         url,
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
             "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.6",
-            "Referer": "https://rent.591.com.tw/",
+            "Referer": referer,
         },
     )
-    with urlopen(request, timeout=12) as response:
-        return response.read().decode("utf-8", errors="ignore")
+    with urlopen(request, timeout=18) as response:
+        return response.read()
+
+
+def fetch_text(url: str, referer: str = "https://rent.591.com.tw/") -> str:
+    return fetch_bytes(url, referer=referer).decode("utf-8", errors="ignore")
 
 
 def parse_591_items(html: str, base_url: str) -> list[dict[str, str | int | float | None]]:
@@ -68,7 +124,6 @@ def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | Non
         if not title or not rent:
             continue
 
-        detail_url = f"https://rent.591.com.tw/{listing_id}"
         items.append(
             {
                 "source": "591",
@@ -77,7 +132,7 @@ def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | Non
                 "rent": rent,
                 "ping": ping,
                 "layout": layout,
-                "url": detail_url,
+                "url": f"https://rent.591.com.tw/{listing_id}",
                 "note": "591 搜尋頁刊登資料",
             }
         )
@@ -124,6 +179,120 @@ def parse_591_text_items(html: str) -> list[dict[str, str | int | float | None]]
     return items
 
 
+def parse_moi_rental_items(
+    city: str,
+    district: str,
+    address: str,
+    keyword: str,
+    layout: str,
+    ping: float | None,
+) -> list[dict[str, str | int | float | None]]:
+    code = MOI_CITY_CODES.get(city) or MOI_CITY_CODES.get(city.replace("臺", "台"))
+    if not code:
+        return []
+
+    csv_text = get_moi_city_csv(code)
+    road = extract_road(address) or extract_road(keyword)
+    compact_road = compact_address(road)
+    compact_input = compact_address(address)
+    target_layout = normalize_layout(layout)
+    target_district = normalize_address(district)
+    scored: list[tuple[int, dict[str, str | int | float | None]]] = []
+
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        row_district = normalize_address(row.get("鄉鎮市區", ""))
+        row_address = normalize_address(row.get("土地位置建物門牌", ""))
+        if not row_address or (target_district and row_district != target_district):
+            continue
+
+        row_compact = compact_address(row_address)
+        row_layout = rental_layout(row)
+        rent = parse_int(row.get("總額元"))
+        area_sqm = parse_float(row.get("建物總面積平方公尺"))
+        row_ping = round(area_sqm / 3.305785, 1) if area_sqm else None
+        if not rent:
+            continue
+
+        score = 0
+        if compact_road and compact_road in row_compact:
+            score += 80
+        if compact_input and compact_input[:12] in row_compact:
+            score += 40
+        if target_layout and normalize_layout(row_layout) == target_layout:
+            score += 22
+        if ping and row_ping:
+            score += max(0, 24 - int(abs(row_ping - ping) * 2))
+        if row_district == target_district:
+            score += 10
+        if compact_road and compact_road not in row_compact:
+            score -= 20
+
+        scored.append(
+            (
+                score,
+                {
+                    "source": "MOI",
+                    "title": f"租賃成交：{row_address}",
+                    "address": row_address,
+                    "rent": rent,
+                    "ping": row_ping,
+                    "layout": row_layout,
+                    "url": MOI_OPEN_DATA_URL,
+                    "note": build_moi_note(row),
+                    "date": format_minguo_date(row.get("租賃年月日", "")),
+                    "buildingType": normalize_text(row.get("建物型態", "")),
+                },
+            )
+        )
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [item for score, item in scored if score >= 0][:MAX_ITEMS]
+
+
+def get_moi_city_csv(code: str) -> str:
+    file_name = f"{code}_lvr_land_c.csv"
+    if file_name not in MOI_CSV_CACHE:
+        url = f"{MOI_DOWNLOAD_ROOT}?fileName={file_name}"
+        MOI_CSV_CACHE[file_name] = fetch_bytes(url, referer=MOI_OPEN_DATA_URL).decode("utf-8-sig", errors="ignore")
+    return MOI_CSV_CACHE[file_name]
+
+
+def rental_layout(row: dict[str, str]) -> str:
+    rental_type = normalize_text(row.get("出租型態", ""))
+    if rental_type:
+        return rental_type
+    rooms = parse_int(row.get("建物現況格局-房"))
+    halls = parse_int(row.get("建物現況格局-廳"))
+    if rooms is not None and halls is not None:
+        return f"{rooms}房{halls}廳"
+    if rooms is not None:
+        return f"{rooms}房"
+    return ""
+
+
+def build_moi_note(row: dict[str, str]) -> str:
+    date = format_minguo_date(row.get("租賃年月日", ""))
+    building = normalize_text(row.get("建物型態", ""))
+    service = normalize_text(row.get("租賃住宅服務", ""))
+    parts = ["內政部租賃實價 Open Data"]
+    if date:
+        parts.append(f"租賃年月日 {date}")
+    if building:
+        parts.append(building)
+    if service:
+        parts.append(service)
+    return "｜".join(parts)
+
+
+def format_minguo_date(value: str) -> str:
+    digits = re.sub(r"[^\d]", "", value or "")
+    if len(digits) < 7:
+        return ""
+    year = int(digits[:3]) + 1911
+    return f"{year}/{digits[3:5]}/{digits[5:7]}"
+
+
 def extract_location(html: str, start: int, end: int) -> str:
     window = normalize_text(html[max(0, start - 900) : min(len(html), end + 900)])
     matches = re.findall(r"[\u4e00-\u9fff]{1,4}區-[\u4e00-\u9fffA-Za-z0-9\-]{2,30}", window)
@@ -132,11 +301,33 @@ def extract_location(html: str, start: int, end: int) -> str:
     return ""
 
 
+def extract_road(value: str) -> str:
+    text = normalize_address(value)
+    match = re.search(r"([\u4e00-\u9fff\d]+(?:大道|路|街)(?:[一二三四五六七八九十\d]+段)?)", text)
+    return match.group(1) if match else ""
+
+
 def clean_listing_title(value: str) -> str:
     title = normalize_text(value)
     title = re.sub(r"^\([^)]{1,24}\)\s*", "", title)
     title = re.sub(r"^(置頂|精選|新上架|可短租)\s*", "", title)
     return title.strip(" ，,")
+
+
+def normalize_layout(value: str) -> str:
+    text = normalize_text(value)
+    if "獨立套房" in text:
+        return "獨立套房"
+    if "分租套房" in text:
+        return "分租套房"
+    if "整" in text or "住家" in text:
+        return "整層住家"
+    match = re.search(r"([1-6一二三四五六])房", text)
+    if match:
+        return f"{match.group(1)}房"
+    if "套房" in text:
+        return "套房"
+    return text
 
 
 def infer_layout(title: str, location: str) -> str:
@@ -181,7 +372,12 @@ class handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
         region = first(params, "region")
-        keyword = first(params, "keyword") or first(params, "district") or first(params, "address")
+        city = first(params, "city")
+        district = first(params, "district")
+        address = first(params, "address")
+        layout = first(params, "layout")
+        ping = parse_float(first(params, "ping"))
+        keyword = first(params, "keyword") or district or address
         list_params = {}
         if region:
             list_params["region"] = region
@@ -191,12 +387,32 @@ class handler(BaseHTTPRequestHandler):
         if list_params:
             url += "?" + urlencode(list_params)
 
+        items: list[dict[str, str | int | float | None]] = []
+        moi_items: list[dict[str, str | int | float | None]] = []
+        errors: dict[str, str] = {}
         try:
             html = fetch_text(url)
             items = parse_591_items(html, url)
-            self.send_json({"ok": True, "source": "591", "queryUrl": url, "items": items}, 200)
         except (TimeoutError, URLError, OSError) as exc:
-            self.send_json({"ok": False, "source": "591", "queryUrl": url, "items": [], "error": str(exc)}, 502)
+            errors["591"] = str(exc)
+
+        try:
+            moi_items = parse_moi_rental_items(city, district, address, keyword, layout, ping)
+        except (TimeoutError, URLError, OSError, csv.Error, ValueError) as exc:
+            errors["MOI"] = str(exc)
+
+        self.send_json(
+            {
+                "ok": not errors,
+                "source": "external",
+                "queryUrl": url,
+                "openDataUrl": MOI_OPEN_DATA_URL,
+                "items": items,
+                "moiItems": moi_items,
+                "errors": errors,
+            },
+            200 if not errors or items or moi_items else 502,
+        )
 
     def send_json(self, payload: dict, status: int) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
