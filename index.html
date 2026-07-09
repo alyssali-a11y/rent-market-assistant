@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>租賃行情快查</title>
+    <link rel="icon" href="./assets/logo-jhaoji.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要內容</a>
+    <header class="app-header">
+      <div class="brand-group">
+        <img class="brand-logo" src="./assets/logo-jhaoji.png" alt="兆基屋管" />
+        <div>
+          <p class="eyebrow">兆基屋管｜業務現場工具</p>
+          <h1>租賃行情快查</h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="ghost-button" id="loadSample" type="button">帶入範例</button>
+        <button class="primary-button" id="runAnalysisTop" type="button">產生建議</button>
+      </div>
+    </header>
+
+    <main id="main" class="workspace">
+      <section class="panel search-panel" aria-labelledby="searchTitle">
+        <div class="section-title">
+          <h2 id="searchTitle">物件條件</h2>
+          <span id="dataStamp" class="data-stamp">資料載入中</span>
+        </div>
+
+        <form id="caseForm" class="case-form">
+          <label class="field wide">
+            <span>物件地址</span>
+            <input id="address" name="address" autocomplete="street-address" placeholder="例如：台北市中正區中華路二段 467 巷 38 弄 5 號" />
+          </label>
+
+          <label class="field">
+            <span>縣市</span>
+            <select id="city" name="city"></select>
+          </label>
+
+          <label class="field">
+            <span>行政區</span>
+            <input id="district" name="district" placeholder="例如：中正區" />
+          </label>
+
+          <label class="field">
+            <span>房屋型態</span>
+            <select id="buildingType" name="buildingType">
+              <option value="">不限</option>
+              <option>電梯大樓</option>
+              <option>公寓</option>
+              <option>透天厝</option>
+              <option>華廈</option>
+              <option>套房</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>格局</span>
+            <select id="layout" name="layout">
+              <option value="">不限</option>
+              <option>獨立套房</option>
+              <option>1 房</option>
+              <option>2 房</option>
+              <option>3 房</option>
+              <option>4 房以上</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>坪數</span>
+            <input id="ping" name="ping" type="number" inputmode="decimal" min="0" step="0.1" placeholder="室內或權狀坪數" />
+          </label>
+
+          <label class="field">
+            <span>管理費</span>
+            <input id="managementFee" name="managementFee" type="number" inputmode="numeric" min="0" step="100" placeholder="元／月" />
+          </label>
+
+          <div class="toggle-row wide" role="group" aria-label="物件條件">
+            <label><input id="hasElevator" type="checkbox" /> 有電梯</label>
+            <label><input id="canCook" type="checkbox" /> 可開伙</label>
+            <label><input id="canPet" type="checkbox" /> 可寵物</label>
+            <label><input id="hasParking" type="checkbox" /> 含車位</label>
+          </div>
+
+          <div class="form-actions wide">
+            <button class="primary-button" id="runAnalysis" type="submit">產生建議</button>
+            <button class="secondary-button" id="clearForm" type="button">清空</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel result-panel" aria-labelledby="resultTitle">
+        <div class="section-title">
+          <h2 id="resultTitle">行情判讀</h2>
+          <span id="confidenceTag" class="pill neutral">等待輸入</span>
+        </div>
+
+        <div class="metrics-grid" aria-live="polite">
+          <div class="metric">
+            <span>建議租金帶</span>
+            <strong id="recommendedBand">－</strong>
+            <small id="recommendedNote">依 591 與實價登錄來源判讀</small>
+          </div>
+          <div class="metric">
+            <span>591 待租物件</span>
+            <strong id="sampleCount">－</strong>
+            <small id="sampleScope">依縣市／路段搜尋</small>
+          </div>
+          <div class="metric">
+            <span>每坪租金</span>
+            <strong id="pppValue">－</strong>
+            <small>用可比物件租金除坪數</small>
+          </div>
+          <div class="metric">
+            <span>實價登錄</span>
+            <strong id="webCount">0 筆</strong>
+            <small>租賃實價來源狀態</small>
+          </div>
+        </div>
+
+        <div class="advice-box">
+          <h3>現場說法</h3>
+          <p id="talkTrack">輸入地址與坪數後，系統會整理可直接對屋主或租客說明的建議。</p>
+        </div>
+
+        <div class="section-title compact">
+          <h3>外部相近物件</h3>
+          <span id="matchSummary" class="muted">尚未分析</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>地址／標題</th>
+                <th>租金</th>
+                <th>坪數</th>
+                <th>格局</th>
+                <th>來源</th>
+              </tr>
+            </thead>
+            <tbody id="matchesBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel web-panel" aria-labelledby="webTitle">
+        <div class="section-title">
+          <h2 id="webTitle">外部網頁快查</h2>
+          <button class="ghost-button" id="copyAddress" type="button">複製地址</button>
+        </div>
+
+        <div class="link-stack">
+          <a id="mapsLink" class="source-link" href="https://www.google.com/maps" target="_blank" rel="noopener">
+            <span class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 21s6-5.3 6-11a6 6 0 0 0-12 0c0 5.7 6 11 6 11Z"></path><circle cx="12" cy="10" r="2.5"></circle></svg>
+            </span>
+            <span><strong>Google 地圖</strong><small>街景、交通、生活機能</small></span>
+          </a>
+          <a id="moiLink" class="source-link" href="https://lvr.land.moi.gov.tw/" target="_blank" rel="noopener">
+            <span class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5"></path><path d="M6.5 9.5V20h11V9.5"></path><path d="M9 20v-6h6v6"></path></svg>
+            </span>
+            <span><strong>內政部實價登錄</strong><small>切到租賃，貼上地址或路段</small></span>
+          </a>
+          <a id="rent591Link" class="source-link" href="https://rent.591.com.tw/" target="_blank" rel="noopener">
+            <span class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path><path d="M8.5 11h5"></path></svg>
+            </span>
+            <span><strong>591 租屋網</strong><small>以縣市與路段搜尋出租物件</small></span>
+          </a>
+        </div>
+
+        <div class="source-status" id="sourceStatus">
+          <strong>來源狀態</strong>
+          <p>按下產生建議後，系統會先嘗試讀取 591 搜尋結果；實價登錄目前以官方查詢頁為準。</p>
+        </div>
+
+        <div class="map-shell">
+          <iframe id="mapFrame" title="Google 地圖位置預覽" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./data/market-data.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
