@@ -214,13 +214,18 @@
       const response = await fetch(`/api/market?${params.toString()}`, { cache: "no-store" });
       if (response.ok) {
         const payload = await response.json();
-        rows.push(...normalize591Rows(payload.items || []));
-        setSourceStatus("已嘗試讀取 591 搜尋結果。實價登錄仍以官方頁面查詢為準。", "good");
+        const parsedRows = normalize591Rows(payload.items || []);
+        rows.push(...parsedRows);
+        if (parsedRows.length) {
+          setSourceStatus(`已讀取 ${parsedRows.length} 筆 591 外部待租物件。實價登錄仍以官方頁面查詢為準。`, "good");
+        } else {
+          setSourceStatus("已連線到 591，但本次條件沒有整理出可比物件；可放寬路段或改用行政區查詢。", "warn");
+        }
       } else {
         setSourceStatus("本機外部資料服務未回應，請從右側開啟 591 與實價登錄查詢頁。", "warn");
       }
     } catch {
-      setSourceStatus("目前是靜態開啟模式，無法自動擷取 591；請改用本機服務啟動，或從右側開啟來源頁查詢。", "warn");
+      setSourceStatus("外部行情服務暫時無法回應，請稍後重試，或先從右側開啟 591 與實價登錄查詢頁。", "warn");
     }
 
     rows.push(buildMoiStatusRow(currentCase));
@@ -250,13 +255,13 @@
     return {
       sourceType: "591",
       sourceLabel: "591 租屋網",
-      title: "待開啟 591 查詢",
+      title: "591 尚未取得可比物件",
       address: buildSearchKeyword(currentCase) || currentCase.address || "請輸入地址",
       rent: null,
       ping: null,
       layout: currentCase.layout || "不限",
       url: els.rent591Link.href,
-      note: "靜態頁面無法直接跨站擷取，請用右側 591 連結查詢；若以本機服務啟動，會自動整理結果。",
+      note: "已嘗試讀取 591 外部來源；若沒有可比租金，請放寬路段、坪數或格局條件。",
       pricePerPing: null,
       status: "待查",
     };

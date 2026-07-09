@@ -9,7 +9,13 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
+MAX_ITEMS = 12
+
+
 def normalize_text(value: str) -> str:
+    value = value.replace("\\/", "/").replace("\\u002F", "/")
+    value = re.sub(r"\\u([0-9a-fA-F]{4})", lambda match: chr(int(match.group(1), 16)), value)
+    value = re.sub(r"<[^>]+>", " ", value)
     return re.sub(r"\s+", " ", unescape(value)).strip()
 
 
@@ -19,6 +25,7 @@ def fetch_text(url: str) -> str:
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
             "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.6",
+            "Referer": "https://rent.591.com.tw/",
         },
     )
     with urlopen(request, timeout=12) as response:
@@ -26,33 +33,42 @@ def fetch_text(url: str) -> str:
 
 
 def parse_591_items(html: str, base_url: str) -> list[dict[str, str | int | float | None]]:
-    text = normalize_text(re.sub(r"<[^>]+>", " ", html))
-    listing_area = text
-    if "為您精選" in listing_area:
-        listing_area = listing_area.split("為您精選", 1)[1]
-    if "全部" in listing_area:
-        listing_area = listing_area.split("全部", 1)[0]
+    items = parse_591_payload_items(html)
+    if not items:
+        items = parse_591_text_items(html)
+    for item in items:
+        if not item.get("url"):
+            item["url"] = base_url
+    return items[:MAX_ITEMS]
 
+
+def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | None]]:
     pattern = re.compile(
-        r"(?:優選好屋\s+)?"
-        r"(?P<title>.{4,90}?)\s+"
-        r"(?P<location>[\u4e00-\u9fff]{1,4}區-[^\s]{2,24})\s+"
-        r"(?:(?P<layout>\d房/)\s*)?"
-        r"(?P<ping>[\d.]+)\s*坪"
-        r"[^元]{0,120}?"
-        r"(?P<rent>[\d,]{4,7})\s*元/月"
+        r'(?P<id>\d{7,9}),"(?P<title>[^"]{4,140})".{0,3500}?'
+        r'"https:\\u002F\\u002Frent\.591\.com\.tw\\u002F(?P=id)",'
+        r'"(?P<floor>[^"]*)","(?P<ping>[\d.]+)坪","(?P<layout>[^"]*)",'
+        r'"(?P<community>[^"]*)",(?P<rent>\d{3,8})',
+        re.S,
     )
 
     items: list[dict[str, str | int | float | None]] = []
-    seen_titles: set[str] = set()
-    for match in pattern.finditer(listing_area):
-        title = clean_listing_title(match.group("title"))
-        if not title or title in seen_titles:
+    seen_ids: set[str] = set()
+    for match in pattern.finditer(html):
+        listing_id = match.group("id")
+        if listing_id in seen_ids:
             continue
-        seen_titles.add(title)
-        rent = int(match.group("rent").replace(",", ""))
-        location = match.group("location")
-        ping = float(match.group("ping")) if match.group("ping") else None
+        seen_ids.add(listing_id)
+
+        title = clean_listing_title(match.group("title"))
+        community = normalize_text(match.group("community"))
+        location = extract_location(html, match.start(), match.end()) or community
+        layout = normalize_text(match.group("layout")) or infer_layout(title, community)
+        ping = parse_float(match.group("ping"))
+        rent = parse_int(match.group("rent"))
+        if not title or not rent:
+            continue
+
+        detail_url = f"https://rent.591.com.tw/{listing_id}"
         items.append(
             {
                 "source": "591",
@@ -60,36 +76,97 @@ def parse_591_items(html: str, base_url: str) -> list[dict[str, str | int | floa
                 "address": location,
                 "rent": rent,
                 "ping": ping,
-                "layout": normalize_text((match.group("layout") or "").replace("/", "")) or infer_layout(title, location),
-                "url": base_url,
-                "note": "591 搜尋頁擷取",
+                "layout": layout,
+                "url": detail_url,
+                "note": "591 搜尋頁刊登資料",
             }
         )
-        if len(items) >= 12:
+        if len(items) >= MAX_ITEMS:
             break
     return items
+
+
+def parse_591_text_items(html: str) -> list[dict[str, str | int | float | None]]:
+    text = normalize_text(html)
+    pattern = re.compile(
+        r"(?P<title>[\u4e00-\u9fffA-Za-z0-9()[\]【】、，,.\- ]{4,90})\s+"
+        r"(?P<location>[\u4e00-\u9fff]{1,4}區-[^\s]{2,24})\s+"
+        r"(?P<ping>[\d.]+)\s*坪.{0,120}?"
+        r"(?P<rent>[\d,]{4,7})\s*元",
+        re.S,
+    )
+
+    items: list[dict[str, str | int | float | None]] = []
+    seen_titles: set[str] = set()
+    for match in pattern.finditer(text):
+        title = clean_listing_title(match.group("title"))
+        if not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
+        rent = parse_int(match.group("rent"))
+        ping = parse_float(match.group("ping"))
+        if not rent:
+            continue
+        items.append(
+            {
+                "source": "591",
+                "title": title,
+                "address": normalize_text(match.group("location")),
+                "rent": rent,
+                "ping": ping,
+                "layout": infer_layout(title, match.group("location")),
+                "url": "",
+                "note": "591 搜尋頁文字資料",
+            }
+        )
+        if len(items) >= MAX_ITEMS:
+            break
+    return items
+
+
+def extract_location(html: str, start: int, end: int) -> str:
+    window = normalize_text(html[max(0, start - 900) : min(len(html), end + 900)])
+    matches = re.findall(r"[\u4e00-\u9fff]{1,4}區-[\u4e00-\u9fffA-Za-z0-9\-]{2,30}", window)
+    if matches:
+        return matches[-1]
+    return ""
 
 
 def clean_listing_title(value: str) -> str:
     title = normalize_text(value)
     title = re.sub(r"^\([^)]{1,24}\)\s*", "", title)
-    title = re.sub(r"^(我也要出現在這裡|優選好屋|精選)\s*", "", title)
-    title = re.sub(r"^\([^)]{1,24}\)\s*", "", title)
-    if len(title) > 64:
-        title = title[-64:]
+    title = re.sub(r"^(置頂|精選|新上架|可短租)\s*", "", title)
     return title.strip(" ，,")
 
 
 def infer_layout(title: str, location: str) -> str:
     text = f"{title} {location}"
-    if "套房" in text:
-        return "套房"
-    match = re.search(r"([1-4一二三四])房", text)
+    if "獨立套房" in text:
+        return "獨立套房"
+    if "分租套房" in text:
+        return "分租套房"
+    if "整層住家" in text:
+        return "整層住家"
+    match = re.search(r"([1-6一二三四五六])房", text)
     if match:
         return f"{match.group(1)}房"
-    if "雅房" in text:
-        return "雅房"
+    if "套房" in text:
+        return "套房"
     return ""
+
+
+def parse_int(value: str | None) -> int | None:
+    if not value:
+        return None
+    digits = re.sub(r"[^\d]", "", value)
+    return int(digits) if digits else None
+
+
+def parse_float(value: str | None) -> float | None:
+    if not value:
+        return None
+    match = re.search(r"\d+(?:\.\d+)?", value)
+    return float(match.group(0)) if match else None
 
 
 class handler(BaseHTTPRequestHandler):
