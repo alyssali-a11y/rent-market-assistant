@@ -25,6 +25,7 @@
     docDetectedFields: document.querySelector("#docDetectedFields"),
     loadSample: document.querySelector("#loadSample"),
     clearForm: document.querySelector("#clearForm"),
+    clearFormTop: document.querySelector("#clearFormTop"),
     runAnalysisTop: document.querySelector("#runAnalysisTop"),
     dataStamp: document.querySelector("#dataStamp"),
     confidenceTag: document.querySelector("#confidenceTag"),
@@ -111,9 +112,16 @@
       event.preventDefault();
       analyze();
     });
-    els.runAnalysisTop.addEventListener("click", analyze);
     els.clearForm.addEventListener("click", clearForm);
-    els.loadSample.addEventListener("click", loadSample);
+    if (els.clearFormTop) {
+      els.clearFormTop.addEventListener("click", clearForm);
+    }
+    if (els.runAnalysisTop) {
+      els.runAnalysisTop.addEventListener("click", analyze);
+    }
+    if (els.loadSample) {
+      els.loadSample.addEventListener("click", loadSample);
+    }
     els.copyAddress.addEventListener("click", copyCurrentAddress);
     [els.docUpload, els.docCamera].filter(Boolean).forEach((input) => {
       input.addEventListener("change", handleDocFileSelect);
