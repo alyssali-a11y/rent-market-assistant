@@ -250,7 +250,7 @@
     els.webCount.textContent = "待查";
     els.pppValue.textContent = "－";
     els.matchSummary.textContent = "讀取外部物件中";
-    els.matchesBody.innerHTML = '<tr><td class="empty-row" colspan="5">正在整理 591 與實價登錄來源狀態。</td></tr>';
+    els.matchesBody.innerHTML = '<tr><td class="empty-row" colspan="6">正在整理 591 與實價登錄來源狀態。</td></tr>';
   }
 
   async function loadExternalRows(currentCase) {
@@ -452,12 +452,14 @@
         : escapeHtml(item.title);
       const rent = item.rent ? formatMoney(item.rent) : item.status;
       const ping = item.ping ? `${item.ping} 坪` : "－";
+      const pricePerPing = item.pricePerPing ? `${formatMoney(item.pricePerPing)}／坪` : "－";
       const sourceClass = item.sourceType === "MOI" ? "source-moi" : "source-591";
       return `
         <tr>
           <td class="address-cell"><strong>${title}</strong><small>${escapeHtml(item.address || item.note || "－")}</small></td>
           <td>${rent}</td>
           <td>${ping}</td>
+          <td>${pricePerPing}</td>
           <td>${escapeHtml(item.layout || "－")}</td>
           <td><span class="source-badge ${sourceClass}">${escapeHtml(item.sourceLabel)}</span><small>${escapeHtml(item.note || "")}</small></td>
         </tr>
@@ -466,7 +468,7 @@
   }
 
   function renderEmptyRows() {
-    els.matchesBody.innerHTML = '<tr><td class="empty-row" colspan="5">輸入地址後，這裡會顯示 591 待租物件與內政部租賃實價 Open Data。</td></tr>';
+    els.matchesBody.innerHTML = '<tr><td class="empty-row" colspan="6">輸入地址後，這裡會顯示 591 待租物件與內政部租賃實價 Open Data。</td></tr>';
   }
 
   function updateLinks() {
