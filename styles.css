@@ -191,6 +191,121 @@ small {
   grid-column: 1 / -1;
 }
 
+.doc-reader {
+  padding: var(--space-3);
+  background: #f9fffd;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.doc-reader legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 4px;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.doc-reader-notice,
+.recognition-warning {
+  color: var(--color-danger);
+  font-weight: 900;
+}
+
+.doc-reader-notice {
+  font-size: 13px;
+}
+
+.doc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 14px;
+  color: var(--color-primary-strong);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 1px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.doc-status {
+  margin: var(--space-2) 0 0;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.doc-status.good {
+  color: var(--color-success);
+  font-weight: 800;
+}
+
+.doc-status.warn,
+.doc-status.bad {
+  color: var(--color-danger);
+  font-weight: 800;
+}
+
+.doc-detected {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.detected-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.detected-item {
+  min-width: 0;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #d9e7e4;
+  border-radius: var(--radius);
+}
+
+.detected-item span,
+.detected-item strong {
+  display: block;
+}
+
+.detected-item span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.detected-item strong {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.recognition-warning {
+  margin: 0;
+  font-size: 13px;
+}
+
 input,
 select {
   width: 100%;
@@ -585,12 +700,17 @@ tbody tr:hover {
   }
 
   .case-form,
-    .metrics-grid {
+  .metrics-grid,
+  .detected-grid {
     grid-template-columns: 1fr;
   }
 
   .toggle-row {
     grid-template-columns: 1fr;
+  }
+
+  .doc-actions > * {
+    flex: 1 1 150px;
   }
 
   .metric strong {

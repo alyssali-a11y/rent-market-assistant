@@ -6,6 +6,8 @@
     <title>租賃行情快查</title>
     <link rel="icon" href="./assets/logo-jhaoji.png" />
     <link rel="stylesheet" href="./styles.css" />
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要內容</a>
@@ -31,6 +33,26 @@
         </div>
 
         <form id="caseForm" class="case-form">
+          <fieldset class="field wide doc-reader">
+            <legend>
+              <span>上傳權狀或謄本辨識</span>
+              <strong class="doc-reader-notice">建議上傳謄本提高辨識正確度</strong>
+            </legend>
+            <div class="doc-actions">
+              <label class="file-button">
+                <input id="docUpload" type="file" accept="application/pdf,image/*" />
+                選擇檔案
+              </label>
+              <label class="file-button">
+                <input id="docCamera" type="file" accept="image/*" capture="environment" />
+                拍照辨識
+              </label>
+              <button class="secondary-button" id="runDocOcr" type="button" disabled>開始辨識</button>
+            </div>
+            <p id="docStatus" class="doc-status">可上傳 PDF、權狀或謄本照片，辨識後會嘗試帶入縣市、行政區、地址與坪數。</p>
+            <div id="docDetectedFields" class="doc-detected" aria-live="polite"></div>
+          </fieldset>
+
           <label class="field wide">
             <span>物件地址</span>
             <input id="address" name="address" autocomplete="street-address" placeholder="例如：台北市中正區中華路二段 467 巷 38 弄 5 號" />

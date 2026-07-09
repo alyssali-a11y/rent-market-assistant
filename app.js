@@ -18,6 +18,11 @@
     canCook: document.querySelector("#canCook"),
     canPet: document.querySelector("#canPet"),
     hasParking: document.querySelector("#hasParking"),
+    docUpload: document.querySelector("#docUpload"),
+    docCamera: document.querySelector("#docCamera"),
+    runDocOcr: document.querySelector("#runDocOcr"),
+    docStatus: document.querySelector("#docStatus"),
+    docDetectedFields: document.querySelector("#docDetectedFields"),
     loadSample: document.querySelector("#loadSample"),
     clearForm: document.querySelector("#clearForm"),
     runAnalysisTop: document.querySelector("#runAnalysisTop"),
@@ -74,7 +79,9 @@
     return map;
   }, {});
   const DISTRICT_NAMES = Object.keys(DISTRICT_TO_CITIES).sort((a, b) => b.length - a.length);
+  const OCR_WARNING = "注意：線上辨識功能有限，請務必再次確認相關欄位後再送出！！";
   let toastTimer = null;
+  let selectedDocFile = null;
 
   function init() {
     fillCityOptions();
@@ -108,6 +115,12 @@
     els.clearForm.addEventListener("click", clearForm);
     els.loadSample.addEventListener("click", loadSample);
     els.copyAddress.addEventListener("click", copyCurrentAddress);
+    [els.docUpload, els.docCamera].filter(Boolean).forEach((input) => {
+      input.addEventListener("change", handleDocFileSelect);
+    });
+    if (els.runDocOcr) {
+      els.runDocOcr.addEventListener("click", runDocumentRecognition);
+    }
 
     ["input", "change"].forEach((eventName) => {
       els.address.addEventListener(eventName, () => {
@@ -459,6 +472,12 @@
   function clearForm() {
     els.form.reset();
     els.city.value = "";
+    selectedDocFile = null;
+    if (els.docUpload) els.docUpload.value = "";
+    if (els.docCamera) els.docCamera.value = "";
+    if (els.runDocOcr) els.runDocOcr.disabled = true;
+    setDocStatus("可上傳 PDF、權狀或謄本照片，辨識後會嘗試帶入縣市、行政區、地址與坪數。", "");
+    renderRecognizedFields(null);
     updateLinks();
     renderEmptyRows();
     renderAnalysis(getCase(), [], buildExternalStats(getCase(), []));
@@ -477,6 +496,393 @@
     } catch {
       showToast("無法自動複製，請手動選取地址");
     }
+  }
+
+  function handleDocFileSelect(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    selectedDocFile = file;
+    if (els.runDocOcr) els.runDocOcr.disabled = false;
+    setDocStatus(`已選擇「${file.name}」，按下開始辨識後會嘗試帶入欄位。`, "");
+    renderRecognizedFields(null);
+  }
+
+  async function runDocumentRecognition() {
+    if (!selectedDocFile) {
+      showToast("請先選擇權狀或謄本檔案");
+      return;
+    }
+
+    if (els.runDocOcr) els.runDocOcr.disabled = true;
+    setDocStatus("辨識中，PDF 會先讀文字層；掃描圖檔才會啟動 OCR。", "");
+    renderRecognizedFields(null);
+
+    try {
+      const text = await extractDocumentText(selectedDocFile);
+      if (!text.trim()) {
+        throw new Error("文件沒有可讀文字");
+      }
+
+      const fields = extractRecognizedFields(text, selectedDocFile.name);
+      applyRecognizedFields(fields);
+      renderRecognizedFields(fields);
+
+      const appliedCount = ["city", "district", "address", "ping"].filter((key) => fields[key]).length;
+      if (appliedCount) {
+        setDocStatus(`已完成辨識，已嘗試帶入 ${appliedCount} 個欄位。`, "good");
+        showToast("辨識完成，請再次確認欄位");
+      } else {
+        setDocStatus("已讀取文件，但沒有找到可自動帶入的欄位。請改用更清楚的謄本或手動輸入。", "warn");
+      }
+    } catch (error) {
+      console.error(error);
+      setDocStatus("辨識失敗，請改上傳原始 PDF 謄本或手動輸入欄位。", "bad");
+      showToast("辨識失敗，請手動確認欄位");
+    } finally {
+      if (els.runDocOcr) els.runDocOcr.disabled = !selectedDocFile;
+    }
+  }
+
+  async function extractDocumentText(file) {
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    if (isPdf) {
+      return readPdfText(file);
+    }
+    return recognizeImageText(file);
+  }
+
+  async function readPdfText(file) {
+    if (!window.pdfjsLib) {
+      throw new Error("PDF 解析套件尚未載入");
+    }
+
+    const pdfjsLib = window.pdfjsLib;
+    if (pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+
+    const buffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    const maxTextPages = Math.min(pdf.numPages, 4);
+    const chunks = [];
+
+    for (let pageNumber = 1; pageNumber <= maxTextPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const pageText = content.items.map((item) => item.str || "").join(" ");
+      chunks.push(pageText);
+    }
+
+    const text = chunks.join("\n");
+    if (compactText(text).length >= 80 || !window.Tesseract) {
+      return text;
+    }
+
+    const ocrChunks = [];
+    const maxOcrPages = Math.min(pdf.numPages, 2);
+    for (let pageNumber = 1; pageNumber <= maxOcrPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1.55 });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: context, viewport }).promise;
+      ocrChunks.push(await recognizeImageText(canvas));
+    }
+    return [text, ...ocrChunks].join("\n");
+  }
+
+  async function recognizeImageText(source) {
+    if (!window.Tesseract) {
+      throw new Error("OCR 套件尚未載入");
+    }
+    const result = await window.Tesseract.recognize(source, "chi_tra+eng");
+    return (result && result.data && result.data.text) || "";
+  }
+
+  function extractRecognizedFields(text, fileName) {
+    const normalized = normalizeDocText(text);
+    const compact = compactText(normalized);
+    const fileLocation = inferLocationFromText(fileName || "");
+    const address = extractTranscriptAddress(normalized, compact);
+    const addressLocation = address ? parseAddress(address) : { city: "", district: "" };
+    const issueCity = extractIssueCity(compact);
+    const sectionDistrict = extractSectionDistrict(compact);
+    const area = extractTitleArea(normalized, compact);
+
+    const district = addressLocation.district || fileLocation.district || sectionDistrict || "";
+    let city = addressLocation.city || fileLocation.city || issueCity || "";
+    if (!city && district) {
+      const possibleCities = DISTRICT_TO_CITIES[district] || [];
+      if (possibleCities.length === 1) city = possibleCities[0];
+    }
+
+    return {
+      city,
+      district,
+      address,
+      ping: area ? area.ping : null,
+      sqm: area ? area.sqm : null,
+      formula: area ? area.formula : "",
+      source: area ? area.source : "",
+    };
+  }
+
+  function applyRecognizedFields(fields) {
+    if (!fields) return;
+    if (fields.address) {
+      els.address.value = fields.address;
+    }
+    if (fields.city && CITY_NAMES.includes(fields.city)) {
+      els.city.value = fields.city;
+    }
+    if (fields.district) {
+      els.district.value = fields.district;
+    }
+    if (fields.ping) {
+      els.ping.value = formatDecimal(fields.ping, 2);
+    }
+    syncAddressParts();
+    updateLinks();
+  }
+
+  function renderRecognizedFields(fields) {
+    if (!els.docDetectedFields) return;
+    if (!fields) {
+      els.docDetectedFields.innerHTML = "";
+      return;
+    }
+
+    const items = [
+      ["縣市", fields.city],
+      ["行政區", fields.district],
+      ["地址", fields.address],
+      ["坪數", fields.ping ? `${formatDecimal(fields.ping, 2)} 坪` : ""],
+    ].filter(([, value]) => value);
+
+    if (!items.length) {
+      els.docDetectedFields.innerHTML = `<p class="recognition-warning">${OCR_WARNING}</p>`;
+      return;
+    }
+
+    els.docDetectedFields.innerHTML = `
+      <div class="detected-grid">
+        ${items.map(([label, value]) => `
+          <div class="detected-item">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+          </div>
+        `).join("")}
+      </div>
+      ${fields.formula ? `<small>${escapeHtml(fields.formula)}</small>` : ""}
+      <p class="recognition-warning">${OCR_WARNING}</p>
+    `;
+  }
+
+  function setDocStatus(message, level) {
+    if (!els.docStatus) return;
+    els.docStatus.textContent = message;
+    els.docStatus.className = `doc-status ${level || ""}`.trim();
+  }
+
+  function normalizeDocText(text) {
+    return toHalfWidth(String(text || ""))
+      .replace(/\r/g, "\n")
+      .replace(/臺/g, "台")
+      .replace(/[﹒‧]/g, ".")
+      .replace(/[㎡]/g, "平方公尺");
+  }
+
+  function compactText(text) {
+    return normalizeDocText(text).replace(/[\s　:：,，。；;、]/g, "");
+  }
+
+  function toHalfWidth(text) {
+    return String(text || "").replace(/[！-～]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0));
+  }
+
+  function inferLocationFromText(text) {
+    const normalized = compactText(text);
+    let city = CITY_NAMES.find((item) => normalized.includes(item));
+    if (!city) {
+      city = CITY_NAMES.find((item) => {
+        const shortName = item.replace(/[市縣]$/, "");
+        return shortName.length >= 2 && normalized.includes(shortName);
+      }) || "";
+    }
+
+    const district = DISTRICT_NAMES.find((item) => normalized.includes(item)) || "";
+    if (!city && district) {
+      const possibleCities = DISTRICT_TO_CITIES[district] || [];
+      if (possibleCities.length === 1) city = possibleCities[0];
+    }
+    return { city, district };
+  }
+
+  function extractIssueCity(compact) {
+    const agencyWindow = compact.match(/([\u4e00-\u9fff]{2,8}(?:市|縣))?[\u4e00-\u9fff]{0,12}(?:地政事務所|登記機關|核發機關|縣市政府)/);
+    if (agencyWindow) {
+      const agencyText = agencyWindow[0];
+      const city = CITY_NAMES.find((item) => agencyText.includes(item) || agencyText.includes(item.replace(/[市縣]$/, "")));
+      if (city) return city;
+    }
+    return "";
+  }
+
+  function extractSectionDistrict(compact) {
+    const match = compact.match(/([\u4e00-\u9fff]{1,4}(?:區|鎮|鄉|市))[\u4e00-\u9fff]{1,12}段/);
+    return match ? match[1] : "";
+  }
+
+  function extractTranscriptAddress(text, compact) {
+    const labels = ["建物門牌", "建物地址", "房屋門牌", "門牌地址", "建物坐落", "門牌"];
+    for (const label of labels) {
+      const index = compact.indexOf(label);
+      if (index === -1) continue;
+      const raw = compact.slice(index + label.length, index + label.length + 120);
+      const address = cleanTranscriptAddress(raw);
+      if (address) return address;
+    }
+
+    const line = text.split(/\n+/).find((item) => /(?:路|街|大道|巷|弄).{0,30}號/.test(item));
+    return line ? cleanTranscriptAddress(line) : "";
+  }
+
+  function cleanTranscriptAddress(raw) {
+    let value = compactText(raw);
+    const stopIndex = value.search(/(?:主要用途|總面積|層次|建物標示|登記|權利範圍|附屬建物|共有部分|所有權|備考|建築完成)/);
+    if (stopIndex > 0) value = value.slice(0, stopIndex);
+
+    const cityIndex = CITY_NAMES.map((city) => value.indexOf(city)).filter((index) => index >= 0).sort((a, b) => a - b)[0];
+    if (Number.isFinite(cityIndex)) value = value.slice(cityIndex);
+    const districtIndex = DISTRICT_NAMES.map((district) => value.indexOf(district)).filter((index) => index >= 0).sort((a, b) => a - b)[0];
+    if (!Number.isFinite(cityIndex) && Number.isFinite(districtIndex)) value = value.slice(districtIndex);
+
+    const doorMatch = value.match(/^(.+?(?:路|街|大道|巷|弄|段).{0,50}?[\d一二三四五六七八九十百]+號(?:之[\d一二三四五六七八九十]+)?(?:[\d一二三四五六七八九十]+樓(?:之[\d一二三四五六七八九十]+)?)?)/);
+    if (doorMatch) return doorMatch[1];
+    const simpleMatch = value.match(/^(.{0,30}?[\d一二三四五六七八九十百]+號(?:之[\d一二三四五六七八九十]+)?(?:[\d一二三四五六七八九十]+樓(?:之[\d一二三四五六七八九十]+)?)?)/);
+    return simpleMatch ? simpleMatch[1] : "";
+  }
+
+  function extractTitleArea(text, compact) {
+    const rows = buildAreaRows(text, compact);
+    const hasUsefulRows = rows.some((row) => row.type === "main" || row.type === "accessory" || row.type === "common");
+    if (hasUsefulRows) {
+      const sqm = rows.reduce((sum, row) => sum + row.sign * row.sqm * row.numerator / row.denominator, 0);
+      if (sqm > 0) {
+        return {
+          sqm,
+          ping: sqm * 0.3025,
+          source: "權狀面積",
+          formula: `權狀面積約 ${formatDecimal(sqm, 2)} 平方公尺，${formatDecimal(sqm * 0.3025, 2)} 坪`,
+        };
+      }
+    }
+
+    const pingMatch = compact.match(/(?:權狀坪數|謄本坪數|建物坪數|坪數)([0-9]+(?:\.[0-9]+)?)坪?/);
+    if (pingMatch) {
+      const ping = Number(pingMatch[1]);
+      return { sqm: ping / 0.3025, ping, source: "權狀面積", formula: `權狀面積約 ${formatDecimal(ping, 2)} 坪` };
+    }
+
+    const sqmMatch = compact.match(/(?:權狀面積|謄本面積|登記面積|建物總面積)([0-9]+(?:\.[0-9]+)?)平方公尺/);
+    if (sqmMatch) {
+      const sqm = Number(sqmMatch[1]);
+      return {
+        sqm,
+        ping: sqm * 0.3025,
+        source: "權狀面積",
+        formula: `權狀面積約 ${formatDecimal(sqm, 2)} 平方公尺，${formatDecimal(sqm * 0.3025, 2)} 坪`,
+      };
+    }
+
+    return null;
+  }
+
+  function buildAreaRows(text, compact) {
+    const rows = [];
+    const mainAreas = extractMainAreas(compact);
+    mainAreas.forEach((sqm) => rows.push({ type: "main", sqm, numerator: 1, denominator: 1, sign: 1 }));
+
+    extractAccessoryAreas(compact).forEach((sqm) => {
+      rows.push({ type: "accessory", sqm, numerator: 1, denominator: 1, sign: 1 });
+    });
+
+    extractCommonRows(compact).forEach((row) => rows.push(row));
+    return rows;
+  }
+
+  function extractMainAreas(compact) {
+    const areas = [...compact.matchAll(/層次面積([0-9]+(?:\.[0-9]+)?)平方公尺/g)].map((match) => Number(match[1]));
+    if (areas.length) return uniqueNumbers(areas);
+
+    const mainSection = sliceBetween(compact, ["主建物", "建物標示部"], ["附屬建物", "共有部分", "共同使用部分", "建物所有權部"]);
+    const totalMatch = mainSection.match(/總面積([0-9]+(?:\.[0-9]+)?)平方公尺/);
+    return totalMatch ? [Number(totalMatch[1])] : [];
+  }
+
+  function extractAccessoryAreas(compact) {
+    const section = sliceBetween(compact, ["附屬建物"], ["共有部分", "共同使用部分", "建物所有權部", "建築基地"]);
+    if (!section) return [];
+    return uniqueNumbers([...section.matchAll(/(?:用途面積|面積)([0-9]+(?:\.[0-9]+)?)平方公尺/g)].map((match) => Number(match[1])));
+  }
+
+  function extractCommonRows(compact) {
+    const section = sliceBetween(compact, ["共有部分", "共同使用部分"], ["建物所有權部", "建築基地權利", "建物坐落", "土地標示部"]);
+    if (!section) return [];
+    const rows = [];
+    const pattern = /權利範圍([0-9]+)分之([0-9]+)/g;
+    let previousEnd = 0;
+    let match;
+    while ((match = pattern.exec(section)) !== null) {
+      const rowText = section.slice(previousEnd, match.index);
+      const areaMatches = [...rowText.matchAll(/(?:面積|用途面積)?([0-9]+(?:\.[0-9]+)?)平方公尺/g)];
+      const areaMatch = areaMatches[areaMatches.length - 1];
+      previousEnd = pattern.lastIndex;
+      if (!areaMatch) continue;
+
+      const sqm = Number(areaMatch[1]);
+      const denominator = Number(match[1]);
+      const numerator = Number(match[2]);
+      if (!sqm || !denominator || !numerator) continue;
+      const context = rowText.slice(Math.max(0, areaMatch.index - 36)) + section.slice(match.index, pattern.lastIndex);
+      const isParking = /(?:停車位|車位編號|車位|停車場)/.test(context);
+      rows.push({
+        type: isParking ? "parking" : "common",
+        sqm,
+        numerator,
+        denominator,
+        sign: isParking ? -1 : 1,
+      });
+    }
+    return rows;
+  }
+
+  function sliceBetween(text, startLabels, endLabels) {
+    const starts = startLabels.map((label) => text.indexOf(label)).filter((index) => index >= 0);
+    if (!starts.length) return "";
+    const start = Math.min(...starts);
+    const end = endLabels
+      .map((label) => text.indexOf(label, start + 1))
+      .filter((index) => index > start)
+      .sort((a, b) => a - b)[0];
+    return text.slice(start, end || text.length);
+  }
+
+  function uniqueNumbers(values) {
+    const seen = new Set();
+    return values.filter((value) => {
+      const key = formatDecimal(value, 4);
+      if (!Number.isFinite(value) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function formatDecimal(value, digits) {
+    if (!Number.isFinite(value)) return "";
+    return Number(value.toFixed(digits)).toString();
   }
 
   function parseNumber(value) {
