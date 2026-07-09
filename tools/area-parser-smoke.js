@@ -31,6 +31,7 @@ const context = {
         "台北市": "taipei",
         "新北市": "newtaipei",
         "基隆市": "keelung",
+        "台中市": "taichung",
       },
       pendingCases: [],
     },
@@ -74,6 +75,19 @@ const spacedLabelText = `
 共 有 部 分 1000.00 平 方 公 尺 權 利 範 圍 10000 分 之 200
 `;
 
+const taichungAddressText = `
+台中市清水地政事務所
+建物標示部
+建物門牌 台中市清水區中華路三段197巷46之2號七樓
+層次 總面積 層次面積 主要用途
+七層 113.45 平方公尺 住家用
+附屬建物 用途 面積
+陽台 6.24 平方公尺
+共有部分
+建號 總面積 權利範圍
+0001-0000 1701.49 平方公尺 權利範圍 10000分之244
+`;
+
 const unsafeTotalOnly = `
 建物標示部
 建物門牌 桃園市平鎮區金陵路三段197巷46之2號七樓
@@ -92,6 +106,20 @@ if (first.city !== "桃園市" || first.district !== "平鎮區") {
 const second = api.extractRecognizedFields(spacedLabelText, "平鎮區謄本.pdf");
 approx(second.sqm, 70, "spaced label sqm");
 approx(second.ping, 21.18, "spaced label ping");
+if (second.address !== "桃園市平鎮區金陵路三段197巷46之2號七樓") {
+  throw new Error(`spaced address failed: ${second.address}`);
+}
+
+const third = api.extractRecognizedFields(taichungAddressText, "台中市清水區謄本.pdf");
+if (third.city !== "台中市" || third.district !== "清水區") {
+  throw new Error(`taichung location failed: ${third.city}/${third.district}`);
+}
+if (third.address !== "台中市清水區中華路三段197巷46之2號七樓") {
+  throw new Error(`taichung address failed: ${third.address}`);
+}
+if (!third.areaRows || third.areaRows.length < 3) {
+  throw new Error(`area rows missing: ${third.areaRows && third.areaRows.length}`);
+}
 
 const unsafe = api.extractRecognizedFields(unsafeTotalOnly, "平鎮區謄本.pdf");
 if (unsafe.ping) {
@@ -102,5 +130,7 @@ console.log(JSON.stringify({
   mixedPing: first.ping,
   mixedFormula: first.formula,
   spacedPing: second.ping,
+  taichungAddress: third.address,
+  taichungRows: third.areaRows.length,
   unsafePing: unsafe.ping,
 }, null, 2));

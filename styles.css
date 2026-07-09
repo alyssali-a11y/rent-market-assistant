@@ -306,6 +306,102 @@ small {
   font-size: 13px;
 }
 
+.area-review {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: #f8fffd;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.area-review-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.area-review-head strong {
+  color: var(--color-primary-strong);
+}
+
+.area-review-head span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.area-review-rows {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.area-review-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.25fr) repeat(3, minmax(72px, 0.75fr));
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2);
+  background: #fff;
+  border: 1px solid #d9e7e4;
+  border-radius: var(--radius);
+}
+
+.area-review-row label {
+  min-width: 0;
+}
+
+.area-review-row label > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.area-review-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.area-review-check input {
+  width: 18px;
+  min-height: 18px;
+  padding: 0;
+}
+
+.area-review-check span {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.area-row-result,
+.area-review-total {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.area-row-result {
+  grid-column: 1 / -1;
+  padding: 8px 10px;
+  color: var(--color-primary-strong);
+  background: var(--color-surface-2);
+  border-radius: var(--radius);
+}
+
+.area-review-total {
+  padding: 9px 10px;
+  color: #7f1d1d;
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius);
+}
+
 input,
 select {
   width: 100%;
@@ -703,6 +799,15 @@ tbody tr:hover {
   .metrics-grid,
   .detected-grid {
     grid-template-columns: 1fr;
+  }
+
+  .area-review-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .area-review-check,
+  .area-row-result {
+    grid-column: 1 / -1;
   }
 
   .toggle-row {

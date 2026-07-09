@@ -83,6 +83,7 @@
   const OCR_WARNING = "注意：線上辨識功能有限，請務必再次確認相關欄位後再送出！！";
   const SQM_TO_PING = 0.3025;
   const AREA_UNIT_PATTERN = "(?:平方公尺|㎡|m²|m2|M2|平方米)";
+  const ADDRESS_NUMBER_PATTERN = "[\\d一二三四五六七八九十百]+(?:之[\\d一二三四五六七八九十百]+)?號";
   const OCR_JOIN_LABELS = [
     "建物標示部",
     "土地標示部",
@@ -158,6 +159,11 @@
     });
     if (els.runDocOcr) {
       els.runDocOcr.addEventListener("click", runDocumentRecognition);
+    }
+    if (els.docDetectedFields) {
+      ["input", "change"].forEach((eventName) => {
+        els.docDetectedFields.addEventListener(eventName, handleAreaReviewChange);
+      });
     }
 
     ["input", "change"].forEach((eventName) => {
@@ -664,6 +670,7 @@
       sqm: area ? area.sqm : null,
       formula: area ? area.formula : "",
       source: area ? area.source : "",
+      areaRows: area ? area.rows : [],
     };
   }
 
@@ -709,13 +716,136 @@
         ${items.map(([label, value]) => `
           <div class="detected-item">
             <span>${escapeHtml(label)}</span>
-            <strong>${escapeHtml(value)}</strong>
+            <strong${label === "坪數" ? ' id="detectedPingValue"' : ""}>${escapeHtml(value)}</strong>
           </div>
         `).join("")}
       </div>
+      ${fields.areaRows && fields.areaRows.length ? renderAreaReview(fields.areaRows) : ""}
       ${fields.formula ? `<small>${escapeHtml(fields.formula)}</small>` : ""}
       <p class="recognition-warning">${OCR_WARNING}</p>
     `;
+  }
+
+  function renderAreaReview(rows) {
+    return `
+      <div class="area-review" aria-label="權狀面積拆解確認">
+        <div class="area-review-head">
+          <strong>權狀面積拆解確認</strong>
+          <span>勾選或修正數字後會自動重算坪數</span>
+        </div>
+        <div class="area-review-rows">
+          ${rows.map((row, index) => renderAreaReviewRow(row, index)).join("")}
+        </div>
+        <div class="area-review-total" id="areaReviewTotal">${escapeHtml(areaSummary(rows).formula)}</div>
+      </div>
+    `;
+  }
+
+  function renderAreaReviewRow(row, index) {
+    const isParking = row.type === "parking";
+    const label = areaRowLabel(row.type);
+    return `
+      <div class="area-review-row" data-sign="${row.sign}" data-type="${escapeHtml(row.type)}">
+        <label class="area-review-check">
+          <input class="area-use" type="checkbox" checked />
+          <span>${escapeHtml(label)}${isParking ? "（扣除）" : ""}</span>
+        </label>
+        <label>
+          <span>面積</span>
+          <input class="area-sqm" type="number" inputmode="decimal" min="0" step="0.01" value="${escapeHtml(formatDecimal(row.sqm, 4))}" aria-label="${escapeHtml(label)}面積" />
+        </label>
+        <label>
+          <span>分子</span>
+          <input class="area-numerator" type="number" inputmode="numeric" min="1" step="1" value="${escapeHtml(String(row.numerator || 1))}" aria-label="${escapeHtml(label)}權利範圍分子" />
+        </label>
+        <label>
+          <span>分母</span>
+          <input class="area-denominator" type="number" inputmode="numeric" min="1" step="1" value="${escapeHtml(String(row.denominator || 1))}" aria-label="${escapeHtml(label)}權利範圍分母" />
+        </label>
+        <output class="area-row-result" data-row-result="${index}">${escapeHtml(areaRowFormula(row))}</output>
+      </div>
+    `;
+  }
+
+  function handleAreaReviewChange(event) {
+    if (!event.target.closest(".area-review")) return;
+    updateAreaReviewCalculation();
+  }
+
+  function collectAreaReviewRows() {
+    if (!els.docDetectedFields) return [];
+    return [...els.docDetectedFields.querySelectorAll(".area-review-row")].map((row) => {
+      const sqm = parseNumber(row.querySelector(".area-sqm")?.value);
+      const numerator = parseNumber(row.querySelector(".area-numerator")?.value) || 1;
+      const denominator = parseNumber(row.querySelector(".area-denominator")?.value) || 1;
+      const sign = Number(row.dataset.sign) || 1;
+      const type = row.dataset.type || "common";
+      const checked = row.querySelector(".area-use")?.checked;
+      if (!checked || !sqm || denominator <= 0) return null;
+      return { type, sqm, numerator, denominator, sign };
+    }).filter(Boolean);
+  }
+
+  function updateAreaReviewCalculation() {
+    const rows = collectAreaReviewRows();
+    const summary = areaSummary(rows);
+    const total = document.querySelector("#areaReviewTotal");
+    if (total) total.textContent = summary.formula;
+    if (summary.sqm > 0) {
+      els.ping.value = formatDecimal(summary.ping, 2);
+      const detectedPing = document.querySelector("#detectedPingValue");
+      if (detectedPing) detectedPing.textContent = `${formatDecimal(summary.ping, 2)} 坪`;
+      syncAddressParts();
+      updateLinks();
+    } else {
+      els.ping.value = "";
+      const detectedPing = document.querySelector("#detectedPingValue");
+      if (detectedPing) detectedPing.textContent = "－";
+      updateLinks();
+    }
+    if (els.docDetectedFields) {
+      els.docDetectedFields.querySelectorAll(".area-review-row").forEach((row) => {
+        const output = row.querySelector(".area-row-result");
+        const item = {
+          type: row.dataset.type || "common",
+          sign: Number(row.dataset.sign) || 1,
+          sqm: parseNumber(row.querySelector(".area-sqm")?.value) || 0,
+          numerator: parseNumber(row.querySelector(".area-numerator")?.value) || 1,
+          denominator: parseNumber(row.querySelector(".area-denominator")?.value) || 1,
+        };
+        if (output) output.textContent = row.querySelector(".area-use")?.checked ? areaRowFormula(item) : "未採用";
+      });
+    }
+  }
+
+  function areaSummary(rows) {
+    const sqm = rows.reduce((sum, row) => sum + row.sign * row.sqm * row.numerator / row.denominator, 0);
+    const ping = sqm * SQM_TO_PING;
+    const formulaParts = rows.map(areaRowFormula);
+    return {
+      sqm,
+      ping,
+      formula: sqm > 0
+        ? `權狀面積 ${formatDecimal(sqm, 2)} 平方公尺，${formatDecimal(ping, 2)} 坪（${formulaParts.join("；")}）`
+        : "未勾選可計算的權狀面積",
+    };
+  }
+
+  function areaRowLabel(type) {
+    return {
+      main: "主建物",
+      accessory: "附屬建物",
+      common: "共有部分",
+      parking: "車位共有部分",
+    }[type] || "面積";
+  }
+
+  function areaRowFormula(row) {
+    const allocated = row.sqm * row.numerator / row.denominator;
+    const label = areaRowLabel(row.type);
+    const fraction = row.numerator === 1 && row.denominator === 1 ? "" : ` × ${row.numerator} / ${row.denominator}`;
+    const sign = row.sign < 0 ? "－" : "";
+    return `${sign}${label} ${formatDecimal(row.sqm, 2)}${fraction} = ${sign}${formatDecimal(allocated, 2)} 平方公尺`;
   }
 
   function setDocStatus(message, level) {
@@ -797,15 +927,18 @@
   function extractTranscriptAddress(text, compact) {
     const labels = ["建物門牌", "建物地址", "房屋門牌", "門牌地址", "建物坐落", "門牌"];
     for (const label of labels) {
-      const index = compact.indexOf(label);
-      if (index === -1) continue;
-      const raw = compact.slice(index + label.length, index + label.length + 120);
+      const compactIndex = compact.indexOf(label);
+      const textIndex = normalizeOcrText(text).indexOf(label);
+      if (compactIndex === -1 && textIndex === -1) continue;
+      const raw = compactIndex >= 0
+        ? compact.slice(compactIndex + label.length, compactIndex + label.length + 180)
+        : normalizeOcrText(text).slice(textIndex + label.length, textIndex + label.length + 180);
       const address = cleanTranscriptAddress(raw);
       if (address) return address;
     }
 
-    const line = text.split(/\n+/).find((item) => /(?:路|街|大道|巷|弄).{0,30}號/.test(item));
-    return line ? cleanTranscriptAddress(line) : "";
+    const fullAddress = findAddressLikeText(text);
+    return fullAddress ? cleanTranscriptAddress(fullAddress) : "";
   }
 
   function cleanTranscriptAddress(raw) {
@@ -818,10 +951,25 @@
     const districtIndex = DISTRICT_NAMES.map((district) => value.indexOf(district)).filter((index) => index >= 0).sort((a, b) => a - b)[0];
     if (!Number.isFinite(cityIndex) && Number.isFinite(districtIndex)) value = value.slice(districtIndex);
 
-    const doorMatch = value.match(/^(.+?(?:路|街|大道|巷|弄|段).{0,50}?[\d一二三四五六七八九十百]+號(?:之[\d一二三四五六七八九十]+)?(?:[\d一二三四五六七八九十]+樓(?:之[\d一二三四五六七八九十]+)?)?)/);
+    const doorMatch = value.match(new RegExp(`^(.+?(?:路|街|大道|巷|弄|段).{0,60}?${ADDRESS_NUMBER_PATTERN}(?:[\\d一二三四五六七八九十百]+樓(?:之[\\d一二三四五六七八九十百]+)?)?)`));
     if (doorMatch) return doorMatch[1];
-    const simpleMatch = value.match(/^(.{0,30}?[\d一二三四五六七八九十百]+號(?:之[\d一二三四五六七八九十]+)?(?:[\d一二三四五六七八九十]+樓(?:之[\d一二三四五六七八九十]+)?)?)/);
+    const simpleMatch = value.match(new RegExp(`^(.{0,30}?${ADDRESS_NUMBER_PATTERN}(?:[\\d一二三四五六七八九十百]+樓(?:之[\\d一二三四五六七八九十百]+)?)?)`));
     return simpleMatch ? simpleMatch[1] : "";
+  }
+
+  function findAddressLikeText(text) {
+    const normalized = compactText(text);
+    const cityAlternates = CITY_NAMES.map(escapeRegExp).join("|");
+    const districtAlternates = DISTRICT_NAMES.map(escapeRegExp).join("|");
+    const patterns = [
+      new RegExp(`((?:${cityAlternates})?(?:${districtAlternates})?.{0,40}?(?:大道|路|街|巷|弄|段).{0,70}?${ADDRESS_NUMBER_PATTERN}(?:[\\d一二三四五六七八九十百]+樓(?:之[\\d一二三四五六七八九十百]+)?)?)`),
+      new RegExp(`((?:${cityAlternates})(?:${districtAlternates}).{0,90}?${ADDRESS_NUMBER_PATTERN}(?:[\\d一二三四五六七八九十百]+樓(?:之[\\d一二三四五六七八九十百]+)?)?)`),
+    ];
+    for (const pattern of patterns) {
+      const match = normalized.match(pattern);
+      if (match) return match[1];
+    }
+    return "";
   }
 
   function extractTitleArea(text, compact) {
@@ -845,6 +993,7 @@
           ping: sqm * SQM_TO_PING,
           source: "權狀面積",
           formula: `權狀面積約 ${formatDecimal(sqm, 2)} 平方公尺，${formatDecimal(sqm * SQM_TO_PING, 2)} 坪（${details}）`,
+          rows,
         };
       }
     }
