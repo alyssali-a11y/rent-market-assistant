@@ -81,6 +81,36 @@
   }, {});
   const DISTRICT_NAMES = Object.keys(DISTRICT_TO_CITIES).sort((a, b) => b.length - a.length);
   const OCR_WARNING = "注意：線上辨識功能有限，請務必再次確認相關欄位後再送出！！";
+  const SQM_TO_PING = 0.3025;
+  const AREA_UNIT_PATTERN = "(?:平方公尺|㎡|m²|m2|M2|平方米)";
+  const OCR_JOIN_LABELS = [
+    "建物標示部",
+    "土地標示部",
+    "建物所有權部",
+    "所有權部",
+    "建物他項權利部",
+    "他項權利部",
+    "建物門牌",
+    "建物坐落地號",
+    "主要用途",
+    "主要建材",
+    "建築完成日期",
+    "建築基地權利",
+    "登記原因",
+    "主建物",
+    "附屬建物",
+    "附屬建物用途",
+    "共有部分",
+    "共同使用部分",
+    "權利範圍",
+    "層次面積",
+    "總面積",
+    "面積",
+    "平方公尺",
+    "停車位",
+    "停車空間",
+    "分之",
+  ];
   let toastTimer = null;
   let selectedDocFile = null;
 
@@ -706,6 +736,27 @@
     return normalizeDocText(text).replace(/[\s　:：,，。；;、]/g, "");
   }
 
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function normalizeOcrLabels(text) {
+    return OCR_JOIN_LABELS.reduce((output, label) => {
+      const looseLabel = label.split("").map(escapeRegExp).join("\\s*");
+      return output.replace(new RegExp(looseLabel, "g"), label);
+    }, String(text || ""));
+  }
+
+  function normalizeOcrText(text) {
+    const fullWidth = "０１２３４５６７８９．";
+    const halfWidth = "0123456789.";
+    const normalized = normalizeDocText(text)
+      .replace(/[０-９．]/g, (char) => halfWidth[fullWidth.indexOf(char)] || char)
+      .replace(/[,，]/g, "")
+      .replace(/\s+/g, " ");
+    return normalizeOcrLabels(normalized);
+  }
+
   function toHalfWidth(text) {
     return String(text || "").replace(/[！-～]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0));
   }
@@ -775,15 +826,25 @@
 
   function extractTitleArea(text, compact) {
     const rows = buildAreaRows(text, compact);
-    const hasUsefulRows = rows.some((row) => row.type === "main" || row.type === "accessory" || row.type === "common");
-    if (hasUsefulRows) {
+    const hasMain = rows.some((row) => row.type === "main");
+    if (hasMain) {
       const sqm = rows.reduce((sum, row) => sum + row.sign * row.sqm * row.numerator / row.denominator, 0);
       if (sqm > 0) {
+        const mainSqm = rows.filter((row) => row.type === "main").reduce((sum, row) => sum + row.sqm, 0);
+        const accessorySqm = rows.filter((row) => row.type === "accessory").reduce((sum, row) => sum + row.sqm, 0);
+        const commonSqm = rows.filter((row) => row.type === "common").reduce((sum, row) => sum + row.sqm * row.numerator / row.denominator, 0);
+        const parkingSqm = rows.filter((row) => row.type === "parking").reduce((sum, row) => sum + row.sqm * row.numerator / row.denominator, 0);
+        const details = [
+          `主建物 ${formatDecimal(mainSqm, 2)}`,
+          accessorySqm ? `附屬 ${formatDecimal(accessorySqm, 2)}` : "",
+          commonSqm ? `共有 ${formatDecimal(commonSqm, 2)}` : "",
+          parkingSqm ? `車位扣除 ${formatDecimal(parkingSqm, 2)}` : "",
+        ].filter(Boolean).join("＋").replace("＋車位扣除", "－車位扣除");
         return {
           sqm,
-          ping: sqm * 0.3025,
+          ping: sqm * SQM_TO_PING,
           source: "權狀面積",
-          formula: `權狀面積約 ${formatDecimal(sqm, 2)} 平方公尺，${formatDecimal(sqm * 0.3025, 2)} 坪`,
+          formula: `權狀面積約 ${formatDecimal(sqm, 2)} 平方公尺，${formatDecimal(sqm * SQM_TO_PING, 2)} 坪（${details}）`,
         };
       }
     }
@@ -791,17 +852,17 @@
     const pingMatch = compact.match(/(?:權狀坪數|謄本坪數|建物坪數|坪數)([0-9]+(?:\.[0-9]+)?)坪?/);
     if (pingMatch) {
       const ping = Number(pingMatch[1]);
-      return { sqm: ping / 0.3025, ping, source: "權狀面積", formula: `權狀面積約 ${formatDecimal(ping, 2)} 坪` };
+      return { sqm: ping / SQM_TO_PING, ping, source: "權狀面積", formula: `權狀面積約 ${formatDecimal(ping, 2)} 坪` };
     }
 
-    const sqmMatch = compact.match(/(?:權狀面積|謄本面積|登記面積|建物總面積)([0-9]+(?:\.[0-9]+)?)平方公尺/);
+    const sqmMatch = compact.match(/(?:權狀面積|謄本面積|登記面積)([0-9]+(?:\.[0-9]+)?)平方公尺/);
     if (sqmMatch) {
       const sqm = Number(sqmMatch[1]);
       return {
         sqm,
-        ping: sqm * 0.3025,
+        ping: sqm * SQM_TO_PING,
         source: "權狀面積",
-        formula: `權狀面積約 ${formatDecimal(sqm, 2)} 平方公尺，${formatDecimal(sqm * 0.3025, 2)} 坪`,
+        formula: `權狀面積約 ${formatDecimal(sqm, 2)} 平方公尺，${formatDecimal(sqm * SQM_TO_PING, 2)} 坪`,
       };
     }
 
@@ -809,84 +870,222 @@
   }
 
   function buildAreaRows(text, compact) {
+    const section = buildingMarkSection(text) || normalizeOcrText(text);
     const rows = [];
-    const mainAreas = extractMainAreas(compact);
+    const mainAreas = extractMainAreas(section);
     mainAreas.forEach((sqm) => rows.push({ type: "main", sqm, numerator: 1, denominator: 1, sign: 1 }));
 
-    extractAccessoryAreas(compact).forEach((sqm) => {
+    extractAccessoryAreas(section).forEach((sqm) => {
       rows.push({ type: "accessory", sqm, numerator: 1, denominator: 1, sign: 1 });
     });
 
-    extractCommonRows(compact).forEach((row) => rows.push(row));
-    return rows;
+    extractCommonRows(section).forEach((row) => rows.push(row));
+
+    const expectsMoreRows = /共有部分|共同使用部分|附屬建物/.test(section);
+    const hasLayerArea = /層次面積/.test(section);
+    const onlyUnsafeMainTotal = !hasLayerArea && expectsMoreRows && rows.length === 1 && rows[0].type === "main";
+    return onlyUnsafeMainTotal ? [] : rows;
   }
 
-  function extractMainAreas(compact) {
-    const areas = [...compact.matchAll(/層次面積(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)].map((match) => Number(match[1]));
+  function normalizeOcrLines(text) {
+    return normalizeOcrText(text)
+      .replace(/(建物標示部|主建物|層次面積|總面積|附屬建物用途|附屬建物|共有部分|共同使用部分|權利範圍|建築完成日期|建築基地權利|建物所有權部|所有權部)/g, "\n$1")
+      .replace(/([。；;])/g, "$1\n")
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  function sectionBetween(text, startPattern, stopPattern) {
+    const normalized = normalizeOcrText(text);
+    const start = normalized.search(startPattern);
+    if (start < 0) return "";
+    const rest = normalized.slice(start);
+    const stop = rest.slice(2).search(stopPattern);
+    return stop >= 0 ? rest.slice(0, stop + 2) : rest;
+  }
+
+  function buildingMarkSection(text) {
+    return sectionBetween(text, /建物標示部|標示部/, /土地標示部|所有權部|建物所有權部|他項權利部|建物他項權利部/);
+  }
+
+  function subsection(text, startPattern, stopPattern) {
+    return sectionBetween(text, startPattern, stopPattern) || "";
+  }
+
+  function sharedPartSection(section) {
+    return subsection(section, /共有部分|共同使用部分/, /建築基地權利|建物所有權部|所有權部|土地標示部|他項權利部/) || "";
+  }
+
+  function sectionUntil(text, stopPattern) {
+    const normalized = normalizeOcrText(text);
+    const stop = normalized.search(stopPattern);
+    return stop >= 0 ? normalized.slice(0, stop) : normalized;
+  }
+
+  function areaValuesFromText(text) {
+    const normalized = normalizeOcrText(text);
+    const unitRegex = new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*${AREA_UNIT_PATTERN}`, "g");
+    const unitValues = [...normalized.matchAll(unitRegex)]
+      .map((match) => Number(match[1]))
+      .filter((value) => Number.isFinite(value) && value > 0 && value < 10000);
+    if (unitValues.length) return unitValues;
+
+    return [...normalized.matchAll(/([0-9]+\.[0-9]+)/g)]
+      .map((match) => Number(match[1]))
+      .filter((value) => Number.isFinite(value) && value > 0 && value < 10000);
+  }
+
+  function areaValuesAfterLabel(text, label) {
+    const normalized = normalizeOcrText(text);
+    const compact = compactText(normalized);
+    const labelPattern = escapeRegExp(label);
+    const regex = new RegExp(`${labelPattern}[^0-9]{0,90}([0-9]+(?:\\.[0-9]+)?)(?:${AREA_UNIT_PATTERN})?`, "g");
+    return [...compact.matchAll(regex)]
+      .map((match) => Number(match[1]))
+      .filter((value) => Number.isFinite(value) && value > 0 && value < 10000);
+  }
+
+  function areaValuesFromLines(lines) {
+    const values = [];
+    lines.forEach((line) => {
+      if (/權利範圍|分之/.test(line) && !new RegExp(AREA_UNIT_PATTERN).test(line)) return;
+      values.push(...areaValuesFromText(line));
+    });
+    return values;
+  }
+
+  function sumSectionAreas(section, startPattern, stopPattern) {
+    const target = subsection(section, startPattern, stopPattern);
+    if (!target) return 0;
+    const values = areaValuesFromLines(normalizeOcrLines(target));
+    return uniqueNumbers(values).reduce((sum, value) => sum + value, 0);
+  }
+
+  function extractMainAreas(section) {
+    const target = subsection(section, /主建物(?:層次)?(?:面積)?/, /附屬建物|共有部分|共同使用部分|建物門牌|主要用途|建築完成|登記原因|所有權部/)
+      || sectionUntil(section, /附屬建物|共有部分|共同使用部分|建築完成日期|其他登記事項|所有權部/);
+    if (!target) return [];
+
+    const areas = areaValuesAfterLabel(target, "層次面積");
     if (areas.length) return uniqueNumbers(areas);
 
-    const mainSection = sliceBetween(compact, ["主建物", "建物標示部"], ["附屬建物", "共有部分", "共同使用部分", "建物所有權部"]);
-    const totalMatch = mainSection.match(/(?:主建物)?總面積(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/);
-    return totalMatch ? [Number(totalMatch[1])] : [];
+    const totalAreas = areaValuesAfterLabel(target, "總面積");
+    if (totalAreas.length) return [totalAreas[0]];
+
+    const lines = normalizeOcrLines(target).filter((line) => !/總面積/.test(line));
+    return uniqueNumbers(areaValuesFromLines(lines));
   }
 
-  function extractAccessoryAreas(compact) {
-    const section = sliceBetween(compact, ["附屬建物"], ["共有部分", "共同使用部分", "建物所有權部", "建築基地"]);
-    if (!section) return [];
-    const labeled = [...section.matchAll(/(?:用途面積|面積)(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)].map((match) => Number(match[1]));
-    if (labeled.length) return uniqueNumbers(labeled);
+  function extractAccessoryAreas(section) {
+    const target = subsection(section, /附屬建物(?:用途)?(?:面積)?/, /共有部分|共同使用部分|主建物|建物門牌|主要用途|建築完成|登記原因|所有權部/);
+    if (!target) return [];
+    const values = areaValuesFromLines(normalizeOcrLines(target));
+    if (values.length) return uniqueNumbers(values);
 
-    return uniqueNumbers([...section.matchAll(/(?:陽台|平台|雨遮|露台|花台|騎樓)([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)].map((match) => Number(match[1])));
+    const compact = compactText(target);
+    return uniqueNumbers([...compact.matchAll(/(?:陽台|平台|雨遮|露台|花台|騎樓)([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)].map((match) => Number(match[1])));
   }
 
-  function extractCommonRows(compact) {
-    const section = sliceBetween(compact, ["共有部分", "共同使用部分"], ["建物所有權部", "建築基地權利", "建物坐落", "土地標示部"]);
-    if (!section) return [];
-    const rows = [];
-    const pattern = /權利範圍([0-9]+)分之([0-9]+)/g;
-    let previousEnd = 0;
-    let match;
-    while ((match = pattern.exec(section)) !== null) {
-      const rowText = section.slice(previousEnd, match.index);
-      const sqm = findAreaNumber(rowText);
-      previousEnd = pattern.lastIndex;
-      if (!sqm) continue;
+  function extractCommonRows(section) {
+    const sharedSection = sharedPartSection(section);
+    if (!sharedSection) return [];
+    const rows = areaAllocationsFromText(sharedSection);
+    if (rows.length) {
+      return rows.map((row) => ({
+        type: row.isParking ? "parking" : "common",
+        sqm: row.area,
+        numerator: row.numerator,
+        denominator: row.denominator,
+        sign: row.isParking ? -1 : 1,
+      }));
+    }
 
+    return normalizeOcrLines(sharedSection)
+      .map(areaAllocationFromLine)
+      .filter(Boolean)
+      .map((row) => ({
+        type: row.isParking ? "parking" : "common",
+        sqm: row.area,
+        numerator: row.numerator,
+        denominator: row.denominator,
+        sign: row.isParking ? -1 : 1,
+      }));
+  }
+
+  function areaAllocationFromLine(line) {
+    const fraction = line.match(/([0-9]+)\s*分之\s*([0-9]+)/);
+    const unitArea = line.match(new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*${AREA_UNIT_PATTERN}`));
+    const decimalAreas = [...line.matchAll(/([0-9]+\.[0-9]+)/g)].map((item) => Number(item[1]));
+    const area = unitArea ? Number(unitArea[1]) : (decimalAreas.length ? Math.max(...decimalAreas) : NaN);
+    if (!Number.isFinite(area)) return null;
+    if (!fraction) return {
+      area,
+      numerator: 1,
+      denominator: 1,
+      isParking: isParkingAllocationContext(line),
+    };
+
+    const denominator = Number(fraction[1]);
+    const numerator = Number(fraction[2]);
+    if (!denominator || !numerator || numerator > denominator) return null;
+    return {
+      area,
+      numerator,
+      denominator,
+      isParking: isParkingAllocationContext(line),
+    };
+  }
+
+  function isParkingAllocationContext(text) {
+    return /含停車位|停車位編號|車位編號|車位權利範圍|停車位[^，。；;]{0,24}權利範圍/.test(normalizeOcrText(text));
+  }
+
+  function areaAllocationsFromText(text) {
+    const normalized = normalizeOcrText(text);
+    const fractionMatches = [...normalized.matchAll(/([0-9]+)\s*分之\s*([0-9]+)/g)];
+    return fractionMatches.map((match) => {
       const denominator = Number(match[1]);
       const numerator = Number(match[2]);
-      if (!sqm || !denominator || !numerator) continue;
-      const context = rowText.slice(-48) + section.slice(match.index, pattern.lastIndex);
-      const isParking = /(?:停車位|車位編號|車位|停車場)/.test(context);
-      rows.push({
-        type: isParking ? "parking" : "common",
-        sqm,
+      if (!denominator || !numerator || numerator > denominator) return null;
+
+      const before = normalized.slice(Math.max(0, match.index - 220), match.index);
+      const contextAfter = normalized.slice(match.index, Math.min(normalized.length, match.index + 90));
+      const unitMatches = [...before.matchAll(new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*${AREA_UNIT_PATTERN}`, "g"))];
+      const decimalMatches = [...before.matchAll(/([0-9]+\.[0-9]+)/g)];
+      const areaMatch = unitMatches.length ? unitMatches[unitMatches.length - 1] : decimalMatches[decimalMatches.length - 1];
+      const area = areaMatch ? Number(areaMatch[1]) : NaN;
+      if (!Number.isFinite(area)) return null;
+      const context = `${before.slice(-80)}${match[0]}${contextAfter.slice(0, 40)}`;
+      return {
+        area,
         numerator,
         denominator,
-        sign: isParking ? -1 : 1,
-      });
-    }
-    return rows;
+        isParking: isParkingAllocationContext(context),
+      };
+    }).filter(Boolean);
   }
 
   function findAreaNumber(text) {
-    const labeledMatches = [...text.matchAll(/(?:總面積|面積|用途面積)(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)];
+    const section = normalizeOcrText(text);
+    const labeledMatches = [...section.matchAll(/(?:總面積|面積|用途面積)(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)];
     if (labeledMatches.length) {
       return Number(labeledMatches[labeledMatches.length - 1][1]);
     }
 
-    const unitMatches = [...text.matchAll(/([0-9]+(?:\.[0-9]+)?)平方公尺/g)];
+    const unitMatches = [...section.matchAll(new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*${AREA_UNIT_PATTERN}`, "g"))];
     if (unitMatches.length) {
       return Number(unitMatches[unitMatches.length - 1][1]);
     }
 
-    const decimalMatches = [...text.matchAll(/[0-9]+\.[0-9]+/g)]
+    const decimalMatches = [...section.matchAll(/[0-9]+\.[0-9]+/g)]
       .map((match) => Number(match[0]))
       .filter((value) => value > 0 && value < 100000);
     if (decimalMatches.length) {
       return decimalMatches[decimalMatches.length - 1];
     }
 
-    const integerMatches = [...text.matchAll(/[0-9]+/g)]
+    const integerMatches = [...section.matchAll(/[0-9]+/g)]
       .map((match) => Number(match[0]))
       .filter((value) => value > 0 && value < 100000);
     return integerMatches.length ? integerMatches[integerMatches.length - 1] : null;
@@ -912,7 +1111,6 @@
       return true;
     });
   }
-
   function formatDecimal(value, digits) {
     if (!Number.isFinite(value)) return "";
     return Number(value.toFixed(digits)).toString();
