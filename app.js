@@ -822,18 +822,21 @@
   }
 
   function extractMainAreas(compact) {
-    const areas = [...compact.matchAll(/層次面積([0-9]+(?:\.[0-9]+)?)平方公尺/g)].map((match) => Number(match[1]));
+    const areas = [...compact.matchAll(/層次面積(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)].map((match) => Number(match[1]));
     if (areas.length) return uniqueNumbers(areas);
 
     const mainSection = sliceBetween(compact, ["主建物", "建物標示部"], ["附屬建物", "共有部分", "共同使用部分", "建物所有權部"]);
-    const totalMatch = mainSection.match(/總面積([0-9]+(?:\.[0-9]+)?)平方公尺/);
+    const totalMatch = mainSection.match(/(?:主建物)?總面積(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/);
     return totalMatch ? [Number(totalMatch[1])] : [];
   }
 
   function extractAccessoryAreas(compact) {
     const section = sliceBetween(compact, ["附屬建物"], ["共有部分", "共同使用部分", "建物所有權部", "建築基地"]);
     if (!section) return [];
-    return uniqueNumbers([...section.matchAll(/(?:用途面積|面積)([0-9]+(?:\.[0-9]+)?)平方公尺/g)].map((match) => Number(match[1])));
+    const labeled = [...section.matchAll(/(?:用途面積|面積)(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)].map((match) => Number(match[1]));
+    if (labeled.length) return uniqueNumbers(labeled);
+
+    return uniqueNumbers([...section.matchAll(/(?:陽台|平台|雨遮|露台|花台|騎樓)([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)].map((match) => Number(match[1])));
   }
 
   function extractCommonRows(compact) {
@@ -845,16 +848,14 @@
     let match;
     while ((match = pattern.exec(section)) !== null) {
       const rowText = section.slice(previousEnd, match.index);
-      const areaMatches = [...rowText.matchAll(/(?:面積|用途面積)?([0-9]+(?:\.[0-9]+)?)平方公尺/g)];
-      const areaMatch = areaMatches[areaMatches.length - 1];
+      const sqm = findAreaNumber(rowText);
       previousEnd = pattern.lastIndex;
-      if (!areaMatch) continue;
+      if (!sqm) continue;
 
-      const sqm = Number(areaMatch[1]);
       const denominator = Number(match[1]);
       const numerator = Number(match[2]);
       if (!sqm || !denominator || !numerator) continue;
-      const context = rowText.slice(Math.max(0, areaMatch.index - 36)) + section.slice(match.index, pattern.lastIndex);
+      const context = rowText.slice(-48) + section.slice(match.index, pattern.lastIndex);
       const isParking = /(?:停車位|車位編號|車位|停車場)/.test(context);
       rows.push({
         type: isParking ? "parking" : "common",
@@ -865,6 +866,30 @@
       });
     }
     return rows;
+  }
+
+  function findAreaNumber(text) {
+    const labeledMatches = [...text.matchAll(/(?:總面積|面積|用途面積)(?:平方公尺)?([0-9]+(?:\.[0-9]+)?)(?:平方公尺)?/g)];
+    if (labeledMatches.length) {
+      return Number(labeledMatches[labeledMatches.length - 1][1]);
+    }
+
+    const unitMatches = [...text.matchAll(/([0-9]+(?:\.[0-9]+)?)平方公尺/g)];
+    if (unitMatches.length) {
+      return Number(unitMatches[unitMatches.length - 1][1]);
+    }
+
+    const decimalMatches = [...text.matchAll(/[0-9]+\.[0-9]+/g)]
+      .map((match) => Number(match[0]))
+      .filter((value) => value > 0 && value < 100000);
+    if (decimalMatches.length) {
+      return decimalMatches[decimalMatches.length - 1];
+    }
+
+    const integerMatches = [...text.matchAll(/[0-9]+/g)]
+      .map((match) => Number(match[0]))
+      .filter((value) => value > 0 && value < 100000);
+    return integerMatches.length ? integerMatches[integerMatches.length - 1] : null;
   }
 
   function sliceBetween(text, startLabels, endLabels) {
