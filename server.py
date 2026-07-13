@@ -56,7 +56,7 @@ class Handler(SimpleHTTPRequestHandler):
         errors = {}
         try:
             html = fetch_text(url)
-            items = parse_591_items(html, url)
+            items = parse_591_items(html, url, address=address, district=district, layout=layout, ping=ping, keyword=keyword)
         except (TimeoutError, URLError, OSError) as exc:
             errors["591"] = str(exc)
 

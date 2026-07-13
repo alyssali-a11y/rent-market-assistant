@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 
 MAX_ITEMS = 12
+MAX_591_PARSE_ITEMS = 30
 MOI_OPEN_DATA_URL = "https://plvr.land.moi.gov.tw/DownloadOpenData"
 MOI_DOWNLOAD_ROOT = "https://plvr.land.moi.gov.tw/Download"
 MOI_CSV_CACHE: dict[str, str] = {}
@@ -88,14 +89,22 @@ def fetch_text(url: str, referer: str = "https://rent.591.com.tw/") -> str:
     return fetch_bytes(url, referer=referer).decode("utf-8", errors="ignore")
 
 
-def parse_591_items(html: str, base_url: str) -> list[dict[str, str | int | float | None]]:
+def parse_591_items(
+    html: str,
+    base_url: str,
+    address: str = "",
+    district: str = "",
+    layout: str = "",
+    ping: float | None = None,
+    keyword: str = "",
+) -> list[dict[str, str | int | float | None]]:
     items = parse_591_payload_items(html)
     if not items:
         items = parse_591_text_items(html)
     for item in items:
         if not item.get("url"):
             item["url"] = base_url
-    return items[:MAX_ITEMS]
+    return rank_market_items(items, address, district, layout, ping, keyword)[:MAX_ITEMS]
 
 
 def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | None]]:
@@ -140,7 +149,7 @@ def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | Non
                 "note": "591 搜尋頁刊登資料",
             }
         )
-        if len(items) >= MAX_ITEMS:
+        if len(items) >= MAX_591_PARSE_ITEMS:
             break
     return items
 
@@ -175,7 +184,7 @@ def parse_591_card_items(html: str) -> list[dict[str, str | int | float | None]]
                 "note": "591 搜尋頁刊登資料",
             }
         )
-        if len(items) >= MAX_ITEMS:
+        if len(items) >= MAX_591_PARSE_ITEMS:
             break
 
     return items
@@ -232,13 +241,19 @@ def extract_591_ping(block: str) -> float | None:
 
 def extract_591_location(block: str) -> str:
     text = normalize_text(block)
-    matches = re.findall(r"[\u4e00-\u9fff]{1,4}區-[\u4e00-\u9fffA-Za-z0-9\-]{2,40}", text)
+    matches = re.findall(r"[\u4e00-\u9fff]{1,5}[區鄉鎮市]-[\u4e00-\u9fffA-Za-z0-9\-]{2,40}", text)
     if matches:
         return matches[-1]
+    road_matches = re.findall(
+        r"[\u4e00-\u9fff]{1,5}[區鄉鎮市][\u4e00-\u9fff\d]{1,16}(?:大道|路|街)(?:[一二三四五六七八九十\d]+段)?",
+        text,
+    )
+    if road_matches:
+        return road_matches[-1]
     alt_match = re.search(r'alt="(?P<alt>[^"]{4,240})"', block)
     if alt_match:
         alt = normalize_text(alt_match.group("alt"))
-        location_match = re.search(r"[\u4e00-\u9fff]{1,4}區-[\u4e00-\u9fffA-Za-z0-9\-]{2,40}", alt)
+        location_match = re.search(r"[\u4e00-\u9fff]{1,5}[區鄉鎮市]-[\u4e00-\u9fffA-Za-z0-9\-]{2,40}", alt)
         if location_match:
             return location_match.group(0)
     return ""
@@ -249,9 +264,12 @@ def extract_591_layout(block: str, title: str) -> str:
     for label in ("整層住家", "獨立套房", "分租套房", "雅房", "車位"):
         if label in text:
             return label
-    match = re.search(r"([1-6一二三四五六])房(?:[0-6一二三四五六]廳)?", text)
+    if "開放式" in text:
+        return "開放式"
+    match = re.search(r"([1-6一二三四五六兩])\s*房(?:\s*([0-6一二三四五六兩])\s*廳)?", text)
     if match:
-        return match.group(0)
+        hall = match.group(2)
+        return f"{match.group(1)}房{hall}廳" if hall else f"{match.group(1)}房"
     return ""
 
 
@@ -288,7 +306,7 @@ def parse_591_text_items(html: str) -> list[dict[str, str | int | float | None]]
                 "note": "591 搜尋頁文字資料",
             }
         )
-        if len(items) >= MAX_ITEMS:
+        if len(items) >= MAX_591_PARSE_ITEMS:
             break
     return items
 
@@ -421,6 +439,91 @@ def extract_road(value: str) -> str:
     return match.group(1) if match else ""
 
 
+def rank_market_items(
+    items: list[dict[str, str | int | float | None]],
+    address: str,
+    district: str,
+    layout: str,
+    ping: float | None,
+    keyword: str = "",
+) -> list[dict[str, str | int | float | None]]:
+    target_road = extract_road(address) or extract_road(keyword)
+    compact_road = compact_address(target_road)
+    compact_input = compact_address(address)
+    target_district = normalize_address(district)
+    target_layout = normalize_layout(layout)
+
+    scored: list[tuple[int, int, dict[str, str | int | float | None]]] = []
+    for index, item in enumerate(items):
+        score = score_market_item(item, compact_road, compact_input, target_district, target_layout, ping)
+        scored.append((score, -index, item))
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [item for _, _, item in scored]
+
+
+def score_market_item(
+    item: dict[str, str | int | float | None],
+    compact_road: str,
+    compact_input: str,
+    target_district: str,
+    target_layout: str,
+    target_ping: float | None,
+) -> int:
+    title = normalize_address(str(item.get("title") or ""))
+    address = normalize_address(str(item.get("address") or ""))
+    haystack = compact_address(f"{address} {title}")
+    score = 0
+
+    if compact_road:
+        if compact_road in haystack:
+            score += 90
+        else:
+            score -= 18
+
+    if target_district and target_district in normalize_address(f"{address} {title}"):
+        score += 28
+
+    if compact_input and len(compact_input) >= 10 and compact_input[:10] in haystack:
+        score += 35
+
+    item_layout = normalize_layout(str(item.get("layout") or title))
+    if target_layout and item_layout:
+        if item_layout == target_layout:
+            score += 34
+        elif same_room_count(target_layout, item_layout):
+            score += 18
+
+    item_ping = item.get("ping")
+    if target_ping and isinstance(item_ping, (int, float)) and item_ping > 0:
+        diff = abs(float(item_ping) - target_ping)
+        ratio = diff / max(target_ping, 1)
+        if ratio <= 0.1:
+            score += 36
+        elif ratio <= 0.2:
+            score += 26
+        elif ratio <= 0.35:
+            score += 14
+        else:
+            score -= min(24, int(ratio * 20))
+
+    if item.get("rent"):
+        score += 5
+    if item.get("address"):
+        score += 3
+    return score
+
+
+def same_room_count(left: str, right: str) -> bool:
+    left_match = re.search(r"([1-6一二三四五六兩])\s*房", normalize_text(left))
+    right_match = re.search(r"([1-6一二三四五六兩])\s*房", normalize_text(right))
+    return bool(left_match and right_match and normalize_room_count(left_match.group(1)) == normalize_room_count(right_match.group(1)))
+
+
+def normalize_room_count(value: str) -> str:
+    return {"一": "1", "二": "2", "兩": "2", "三": "3", "四": "4", "五": "5", "六": "6"}.get(value, value)
+
+
 def clean_listing_title(value: str) -> str:
     title = normalize_text(value)
     title = re.sub(r"^\([^)]{1,24}\)\s*", "", title)
@@ -436,9 +539,11 @@ def normalize_layout(value: str) -> str:
         return "分租套房"
     if "整" in text or "住家" in text:
         return "整層住家"
-    match = re.search(r"([1-6一二三四五六])房", text)
+    if "開放式" in text:
+        return "開放式"
+    match = re.search(r"([1-6一二三四五六兩])\s*房", text)
     if match:
-        return f"{match.group(1)}房"
+        return f"{normalize_room_count(match.group(1))}房"
     if "套房" in text:
         return "套房"
     return text
@@ -452,9 +557,11 @@ def infer_layout(title: str, location: str) -> str:
         return "分租套房"
     if "整層住家" in text:
         return "整層住家"
-    match = re.search(r"([1-6一二三四五六])房", text)
+    if "開放式" in text:
+        return "開放式"
+    match = re.search(r"([1-6一二三四五六兩])\s*房", text)
     if match:
-        return f"{match.group(1)}房"
+        return f"{normalize_room_count(match.group(1))}房"
     if "套房" in text:
         return "套房"
     return ""
@@ -510,7 +617,7 @@ class handler(BaseHTTPRequestHandler):
         errors: dict[str, str] = {}
         try:
             html = fetch_text(url)
-            items = parse_591_items(html, url)
+            items = parse_591_items(html, url, address=address, district=district, layout=layout, ping=ping, keyword=keyword)
         except (TimeoutError, URLError, OSError) as exc:
             errors["591"] = str(exc)
 
