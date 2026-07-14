@@ -9,17 +9,32 @@
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要內容</a>
-    <header class="app-header">
-      <div class="brand-group">
-        <img class="brand-logo" src="./assets/logo-jhaoji.png" alt="兆基屋管" />
-        <div>
-          <p class="eyebrow">兆基屋管｜業務作業小幫手</p>
-          <h1>租賃行情快查</h1>
+    <header class="orange-header">
+      <nav class="top-nav" aria-label="主要導覽">
+        <a class="nav-logo" href="#main">
+          <img class="brand-logo" src="./assets/logo-jhaoji.png" alt="兆基屋管" />
+          <span>租賃行情快查</span>
+        </a>
+        <div class="nav-links" aria-label="頁面區塊">
+          <a href="#searchTitle">物件條件</a>
+          <a href="#resultTitle">行情判讀</a>
+          <a href="#webTitle">外部快查</a>
         </div>
-      </div>
-      <div class="header-actions">
-        <button class="secondary-button" id="clearFormTop" type="button">清空</button>
-      </div>
+        <button class="secondary-button nav-clear" id="clearFormTop" type="button">清空</button>
+      </nav>
+
+      <section class="hero-panel" aria-labelledby="heroTitle">
+        <div class="hero-copy">
+          <p class="eyebrow">兆基屋管｜業務作業小幫手</p>
+          <h1 id="heroTitle">租賃行情快查</h1>
+          <p>輸入物件條件後，系統會整理 591 待租物件與內政部租賃實價，協助快速判斷周邊行情與建議租金帶。</p>
+        </div>
+        <div class="hero-cards" aria-label="主要功能">
+          <div><strong>591</strong><span>待租物件</span></div>
+          <div><strong>Open Data</strong><span>租賃成交</span></div>
+          <div><strong>單坪價</strong><span>自動換算</span></div>
+        </div>
+      </section>
     </header>
 
     <main id="main" class="workspace">
