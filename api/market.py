@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 MAX_ITEMS = 12
 MAX_591_PARSE_ITEMS = 30
 MOI_OPEN_DATA_URL = "https://plvr.land.moi.gov.tw/DownloadOpenData"
+MOI_QUERY_URL = "https://lvr.land.moi.gov.tw/"
 MOI_DOWNLOAD_ROOT = "https://plvr.land.moi.gov.tw/Download"
 MOI_CSV_CACHE: dict[str, str] = {}
 MOI_CITY_CODES = {
@@ -102,9 +103,6 @@ def parse_591_items(
     items = parse_591_payload_items(html)
     if not items:
         items = parse_591_text_items(html)
-    for item in items:
-        if not item.get("url"):
-            item["url"] = base_url
     return rank_market_items(items, address, district, layout, ping, keyword, building_type)[:MAX_ITEMS]
 
 
@@ -330,7 +328,7 @@ def parse_moi_rental_items(
     compact_input = compact_address(address)
     target_layout = normalize_layout(layout)
     target_district = normalize_address(district)
-    scored: list[tuple[int, dict[str, str | int | float | None]]] = []
+    scored: list[tuple[int, int, dict[str, str | int | float | None]]] = []
 
     reader = csv.DictReader(io.StringIO(csv_text))
     for row in reader:
@@ -361,8 +359,10 @@ def parse_moi_rental_items(
         if compact_road and compact_road not in row_compact:
             score -= 20
 
+        contract_date_key = minguo_date_key(row.get("租賃年月日", ""))
         scored.append(
             (
+                contract_date_key,
                 score,
                 {
                     "source": "MOI",
@@ -371,7 +371,7 @@ def parse_moi_rental_items(
                     "rent": rent,
                     "ping": row_ping,
                     "layout": row_layout,
-                    "url": MOI_OPEN_DATA_URL,
+                    "url": MOI_QUERY_URL,
                     "note": build_moi_note(row),
                     "date": format_minguo_date(row.get("租賃年月日", "")),
                     "buildingType": normalize_text(row.get("建物型態", "")),
@@ -379,8 +379,8 @@ def parse_moi_rental_items(
             )
         )
 
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [item for score, item in scored if score >= 0][:MAX_ITEMS]
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [item for _date_key, score, item in scored if score >= 0][:MAX_ITEMS]
 
 
 def get_moi_city_csv(code: str) -> str:
@@ -424,6 +424,11 @@ def format_minguo_date(value: str) -> str:
         return ""
     year = int(digits[:3]) + 1911
     return f"{year}/{digits[3:5]}/{digits[5:7]}"
+
+
+def minguo_date_key(value: str) -> int:
+    formatted = format_minguo_date(value)
+    return int(formatted.replace("/", "")) if formatted else 0
 
 
 def extract_location(html: str, start: int, end: int) -> str:

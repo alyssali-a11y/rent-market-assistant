@@ -308,7 +308,7 @@
       rent: parseNumber(item.rent),
       ping: parseNumber(item.ping),
       layout: item.layout || "",
-      url: item.url || "",
+      url: normalizeExternalUrl(item.url),
       note: item.note || "591 搜尋結果",
       pricePerPing: parseNumber(item.rent) && parseNumber(item.ping) ? Math.round(parseNumber(item.rent) / parseNumber(item.ping)) : null,
       status: "已讀取",
@@ -340,11 +340,12 @@
       rent: parseNumber(item.rent),
       ping: parseNumber(item.ping),
       layout: item.layout || "",
-      url: item.url || els.moiLink.href,
+      url: normalizeExternalUrl(item.url || els.moiLink.href),
+      date: item.date || "",
       note: item.note || "內政部租賃實價 Open Data",
       pricePerPing: parseNumber(item.rent) && parseNumber(item.ping) ? Math.round(parseNumber(item.rent) / parseNumber(item.ping)) : null,
       status: "已成交",
-    }));
+    })).sort((left, right) => dateSortValue(right.date) - dateSortValue(left.date));
   }
 
   function buildMoiStatusRow(currentCase) {
@@ -450,13 +451,19 @@
       return;
     }
     els.matchesBody.innerHTML = rows.map((item) => {
-      const title = item.url
-        ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>`
+      const safeUrl = normalizeExternalUrl(item.url);
+      const linkAttributes = safeUrl
+        ? `href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"`
+        : "";
+      const title = safeUrl
+        ? `<a ${linkAttributes}>${escapeHtml(item.title)}</a>`
         : escapeHtml(item.title);
       const rent = item.rent ? formatMoney(item.rent) : item.status;
       const ping = item.ping ? `${item.ping} 坪` : "－";
       const pricePerPing = item.pricePerPing ? `${formatMoney(item.pricePerPing)}／坪` : "－";
       const sourceClass = item.sourceType === "MOI" ? "source-moi" : "source-591";
+      const actionLabel = item.sourceType === "MOI" ? "開啟官方查詢" : item.status === "待查" ? "開啟搜尋頁" : "查看物件";
+      const sourceAction = safeUrl ? `<a class="source-page-link" ${linkAttributes}>${actionLabel}</a>` : "";
       return `
         <tr>
           <td class="address-cell"><strong>${title}</strong><small>${escapeHtml(item.address || item.note || "－")}</small></td>
@@ -464,7 +471,7 @@
           <td>${ping}</td>
           <td>${pricePerPing}</td>
           <td>${escapeHtml(item.layout || "－")}</td>
-          <td><span class="source-badge ${sourceClass}">${escapeHtml(item.sourceLabel)}</span><small>${escapeHtml(item.note || "")}</small></td>
+          <td><span class="source-badge ${sourceClass}">${escapeHtml(item.sourceLabel)}</span><small>${escapeHtml(item.note || "")}</small>${sourceAction}</td>
         </tr>
       `;
     }).join("");
@@ -1298,6 +1305,21 @@
     if (value === null || value === undefined || value === "") return null;
     const number = Number(String(value).replace(/[^\d.]/g, ""));
     return Number.isFinite(number) && number > 0 ? number : null;
+  }
+
+  function normalizeExternalUrl(value) {
+    if (!value) return "";
+    try {
+      const url = new URL(String(value), window.location.href);
+      return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function dateSortValue(value) {
+    const digits = String(value || "").replace(/[^\d]/g, "");
+    return digits.length >= 8 ? Number(digits.slice(0, 8)) : 0;
   }
 
   function median(values) {

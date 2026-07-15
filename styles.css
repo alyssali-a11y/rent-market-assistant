@@ -834,6 +834,26 @@ tbody tr:hover {
   background: #dcfce7;
 }
 
+.source-page-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  margin-top: 7px;
+  padding: 4px 9px;
+  color: #9a4310;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.source-page-link:hover {
+  color: #7c2d12;
+  background: #ffedd5;
+}
+
 .source-status {
   margin-top: var(--space-3);
   padding: var(--space-3);

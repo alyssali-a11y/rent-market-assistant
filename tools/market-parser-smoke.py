@@ -7,7 +7,14 @@ from urllib.error import HTTPError
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from api.market import extract_591_rent, fetch_text, parse_591_items, parse_591_payload_items  # noqa: E402
+from api.market import (  # noqa: E402
+    MOI_CSV_CACHE,
+    extract_591_rent,
+    fetch_text,
+    parse_591_items,
+    parse_591_payload_items,
+    parse_moi_rental_items,
+)
 
 
 def main() -> None:
@@ -23,6 +30,12 @@ def main() -> None:
     parsed_sample = parse_591_payload_items(sample_html)
     assert parsed_sample and parsed_sample[0]["rent"] == 20000, parsed_sample
     assert parsed_sample[0]["rent"] != 21528361, parsed_sample
+
+    fallback_items = parse_591_items(
+        "台南優質兩房 南區-永華南路 24坪 20,000元",
+        "https://rent.591.com.tw/list?region=15",
+    )
+    assert fallback_items and fallback_items[0]["url"] == "", fallback_items
 
     sort_html = """
     <div class="item" data-id="21500001">
@@ -97,6 +110,15 @@ def main() -> None:
         building_type="商辦",
     )
     assert office_sample[0]["url"].endswith("/21600003"), office_sample
+
+    moi_cache_key = "a_lvr_land_c.csv"
+    MOI_CSV_CACHE[moi_cache_key] = """鄉鎮市區,土地位置建物門牌,總額元,建物總面積平方公尺,租賃年月日,出租型態,建物型態,租賃住宅服務
+大安區,台北市大安區忠孝東路四段2號,22000,66.12,1150105,整層住家,住宅大樓,
+大安區,台北市大安區忠孝東路四段1號,21000,66.12,1150605,整層住家,住宅大樓,
+"""
+    moi_sample = parse_moi_rental_items("台北市", "大安區", "忠孝東路四段", "", "整層住家", 20)
+    assert [item["date"] for item in moi_sample] == ["2026/06/05", "2026/01/05"], moi_sample
+    MOI_CSV_CACHE.pop(moi_cache_key, None)
 
     url = "https://rent.591.com.tw/list?region=15&keywords=%E5%8D%97%E5%8D%80%20%E6%B0%B8%E8%8F%AF%E5%8D%97%E8%B7%AF"
     html = fetch_text(url)
