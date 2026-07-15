@@ -473,7 +473,7 @@
 
   function updateLinks() {
     const currentCase = getCase();
-    const address = currentCase.address || [currentCase.city, currentCase.district].filter(Boolean).join("");
+    const address = buildMapAddress(currentCase);
     const keyword = buildSearchKeyword(currentCase);
     const encodedAddress = encodeURIComponent(address || "台北市");
     const encodedKeyword = encodeURIComponent(keyword || address || "租屋");
@@ -492,6 +492,22 @@
     if (!address) return [currentCase.city, currentCase.district].filter(Boolean).join(" ");
     const road = address.match(/([\u4e00-\u9fff\d]+(?:大道|路|街)(?:[一二三四五六七八九十\d]+段)?)/);
     return [currentCase.district, road ? road[1] : ""].filter(Boolean).join(" ");
+  }
+
+  function buildMapAddress(currentCase) {
+    const address = currentCase.address || "";
+    const normalizedAddress = normalizeAddress(address);
+    const parts = [];
+    if (currentCase.city && !normalizedAddress.includes(normalizeAddress(currentCase.city))) {
+      parts.push(currentCase.city);
+    }
+    if (currentCase.district && !normalizedAddress.includes(normalizeAddress(currentCase.district))) {
+      parts.push(currentCase.district);
+    }
+    if (address) {
+      parts.push(address);
+    }
+    return parts.join("");
   }
 
   function setSourceStatus(message, level) {
