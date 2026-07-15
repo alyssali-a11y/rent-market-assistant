@@ -466,12 +466,12 @@
       const sourceAction = safeUrl ? `<a class="source-page-link" ${linkAttributes}>${actionLabel}</a>` : "";
       return `
         <tr>
-          <td class="address-cell"><strong>${title}</strong><small>${escapeHtml(item.address || item.note || "－")}</small></td>
-          <td>${rent}</td>
-          <td>${ping}</td>
-          <td>${pricePerPing}</td>
-          <td>${escapeHtml(item.layout || "－")}</td>
-          <td><span class="source-badge ${sourceClass}">${escapeHtml(item.sourceLabel)}</span><small>${escapeHtml(item.note || "")}</small>${sourceAction}</td>
+          <td class="address-cell" data-label="地址／標題"><div class="cell-content"><strong>${title}</strong><small>${escapeHtml(item.address || item.note || "－")}</small></div></td>
+          <td data-label="租金"><div class="cell-content cell-number">${rent}</div></td>
+          <td data-label="坪數"><div class="cell-content cell-number">${ping}</div></td>
+          <td data-label="單坪價"><div class="cell-content cell-number">${pricePerPing}</div></td>
+          <td data-label="格局"><div class="cell-content">${escapeHtml(item.layout || "－")}</div></td>
+          <td class="source-cell" data-label="來源"><div class="cell-content"><span class="source-badge ${sourceClass}">${escapeHtml(item.sourceLabel)}</span><small>${escapeHtml(item.note || "")}</small>${sourceAction}</div></td>
         </tr>
       `;
     }).join("");
