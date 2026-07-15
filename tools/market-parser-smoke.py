@@ -37,6 +37,20 @@ def main() -> None:
     )
     assert fallback_items and fallback_items[0]["url"] == "", fallback_items
 
+    business_html = """
+    <div class="item" data-v-test>
+      <a class="link v-middle" href="https://business.591.com.tw/rent/21631832"
+         title="信義安和優質店面">信義安和優質店面</a>
+      <div class="item-info-txt"><span>23.4坪</span><span>1F/16F</span></div>
+      <div class="item-info-txt">大安區-安和路一段</div>
+      <div class="item-info-price"><strong class="font-arial">105,000</strong><span>元/月</span></div>
+    </div>
+    """
+    business_items = parse_591_payload_items(business_html)
+    assert business_items and business_items[0]["rent"] == 105000, business_items
+    assert business_items[0]["url"] == "https://business.591.com.tw/rent/21631832", business_items
+    assert business_items[0]["ping"] == 23.4, business_items
+
     sort_html = """
     <div class="item" data-id="21500001">
       <a class="link v-middle" href="https://rent.591.com.tw/21500001" title="東區 1 房電梯套房">東區 1 房電梯套房</a>
@@ -132,6 +146,22 @@ def main() -> None:
 
     if not any(item.get("url", "").endswith("/21528361") and item.get("rent") == 20000 for item in items):
         print("warning: live 591 search result no longer contains 21528361 at rent 20000")
+
+    commercial_queries = [
+        "https://rent.591.com.tw/list?kind=5&keywords=%E5%A4%A7%E5%AE%89%E5%8D%80",
+        "https://rent.591.com.tw/list?kind=6&keywords=%E5%A4%A7%E5%AE%89%E5%8D%80",
+    ]
+    for commercial_url in commercial_queries:
+        commercial_items = parse_591_items(fetch_text(commercial_url), commercial_url)
+        if not commercial_items:
+            raise AssertionError(f"591 commercial parser returned no items: {commercial_url}")
+        missing_links = [
+            item
+            for item in commercial_items
+            if not str(item.get("url") or "").startswith("https://business.591.com.tw/rent/")
+        ]
+        if missing_links:
+            raise AssertionError(f"591 commercial items missing listing IDs: {missing_links[:3]}")
 
     detail_urls = [
         "https://rent.591.com.tw/21513985",

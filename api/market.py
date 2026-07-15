@@ -158,7 +158,7 @@ def parse_591_card_items(html: str) -> list[dict[str, str | int | float | None]]
     items: list[dict[str, str | int | float | None]] = []
     seen_ids: set[str] = set()
 
-    for listing_id, block in blocks:
+    for listing_id, listing_url, block in blocks:
         if listing_id in seen_ids:
             continue
         seen_ids.add(listing_id)
@@ -179,7 +179,7 @@ def parse_591_card_items(html: str) -> list[dict[str, str | int | float | None]]
                 "rent": rent,
                 "ping": ping,
                 "layout": layout,
-                "url": f"https://rent.591.com.tw/{listing_id}",
+                "url": listing_url,
                 "note": "591 搜尋頁刊登資料",
             }
         )
@@ -189,20 +189,48 @@ def parse_591_card_items(html: str) -> list[dict[str, str | int | float | None]]
     return items
 
 
-def split_591_item_blocks(html: str) -> list[tuple[str, str]]:
-    matches = list(re.finditer(r'<div class="item"\s+data-id="(?P<id>\d{7,9})"', html))
-    blocks: list[tuple[str, str]] = []
+def split_591_item_blocks(html: str) -> list[tuple[str, str, str]]:
+    matches = list(re.finditer(r'<div class="item"(?:\s+[^>]*)?>', html))
+    blocks: list[tuple[str, str, str]] = []
     for index, match in enumerate(matches):
         start = match.start()
         end = matches[index + 1].start() if index + 1 < len(matches) else min(len(html), start + 50000)
-        blocks.append((match.group("id"), html[start:end]))
+        block = html[start:end]
+        listing = extract_591_listing_link(block)
+        if listing:
+            blocks.append((listing[0], listing[1], block))
     return blocks
+
+
+def extract_591_listing_link(block: str) -> tuple[str, str] | None:
+    decoded = block.replace("\\/", "/").replace("\\u002F", "/")
+    match = re.search(
+        r'https://(?P<site>rent|business)\.591\.com\.tw/'
+        r'(?:(?:rent)/)?(?P<id>\d{7,9})(?:[?"#/<]|$)',
+        decoded,
+        re.I,
+    )
+    if not match:
+        return None
+
+    listing_id = match.group("id")
+    if match.group("site").lower() == "business":
+        return listing_id, f"https://business.591.com.tw/rent/{listing_id}"
+    return listing_id, f"https://rent.591.com.tw/{listing_id}"
 
 
 def extract_591_title(block: str) -> str:
     title_match = re.search(r'<a[^>]+title="(?P<title>[^"]{2,180})"', block)
     if title_match:
         return clean_listing_title(title_match.group("title"))
+
+    link_title_match = re.search(
+        r'<a[^>]+class="[^"]*\btitle\b[^"]*"[^>]*>(?P<title>.*?)</a>',
+        block,
+        re.S | re.I,
+    )
+    if link_title_match:
+        return clean_listing_title(link_title_match.group("title"))
 
     alt_match = re.search(r'alt="(?P<alt>[^"]{4,240})"', block)
     if alt_match:
@@ -220,6 +248,22 @@ def extract_591_rent(block: str) -> int | None:
     price_block = re.search(r'item-info-price.{0,900}?<div class="inline-flex-row"[^>]*>(?P<rent>[\d,]{3,8})</div>.{0,160}?元/月', block, re.S)
     if price_block:
         return parse_int(price_block.group("rent"))
+
+    business_price = re.search(
+        r'item-info-price.{0,900}?<(?:strong|span)[^>]*>(?P<rent>[\d,]{3,8})</(?:strong|span)>.{0,180}?元/月',
+        block,
+        re.S | re.I,
+    )
+    if business_price:
+        return parse_int(business_price.group("rent"))
+
+    recommend_price = re.search(
+        r'price-info.{0,500}?<span[^>]+class="[^"]*\bprice\b[^"]*"[^>]*>(?P<rent>[\d,]{3,8})</span>.{0,180}?元/月',
+        block,
+        re.S | re.I,
+    )
+    if recommend_price:
+        return parse_int(recommend_price.group("rent"))
 
     text = normalize_text(block)
     explicit = re.search(r"(?:月租|租金)\s*(?P<rent>[\d,]{3,8})\s*元/月", text)
