@@ -683,6 +683,49 @@ button:active,
   margin-bottom: 0;
 }
 
+.market-disclaimer {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: 14px 16px;
+  color: #7f1d1d;
+  background: #fff7f7;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #dc2626;
+  border-radius: 10px;
+}
+
+.market-disclaimer-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: #ffffff;
+  background: #dc2626;
+  border-radius: 50%;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.market-disclaimer strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.market-disclaimer p {
+  margin: 0;
+  color: #7f1d1d;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.market-disclaimer p + p {
+  margin-top: 4px;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
