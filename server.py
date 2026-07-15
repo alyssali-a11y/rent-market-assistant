@@ -11,6 +11,7 @@ from api.market import (
     MOI_OPEN_DATA_URL,
     fetch_text,
     first,
+    kind_for_building_type,
     parse_591_items,
     parse_float,
     parse_moi_rental_items,
@@ -40,11 +41,15 @@ class Handler(SimpleHTTPRequestHandler):
         district = first(params, "district")
         address = first(params, "address")
         layout = first(params, "layout")
+        building_type = first(params, "buildingType")
+        kind = first(params, "kind") or kind_for_building_type(building_type)
         ping = parse_float(first(params, "ping"))
         keyword = first(params, "keyword") or district or address
         list_params = {}
         if region:
             list_params["region"] = region
+        if kind:
+            list_params["kind"] = kind
         if keyword:
             list_params["keywords"] = keyword
         url = "https://rent.591.com.tw/list"
@@ -56,7 +61,7 @@ class Handler(SimpleHTTPRequestHandler):
         errors = {}
         try:
             html = fetch_text(url)
-            items = parse_591_items(html, url, address=address, district=district, layout=layout, ping=ping, keyword=keyword)
+            items = parse_591_items(html, url, address=address, district=district, layout=layout, ping=ping, keyword=keyword, building_type=building_type)
         except (TimeoutError, URLError, OSError) as exc:
             errors["591"] = str(exc)
 

@@ -97,6 +97,7 @@ def parse_591_items(
     layout: str = "",
     ping: float | None = None,
     keyword: str = "",
+    building_type: str = "",
 ) -> list[dict[str, str | int | float | None]]:
     items = parse_591_payload_items(html)
     if not items:
@@ -104,7 +105,7 @@ def parse_591_items(
     for item in items:
         if not item.get("url"):
             item["url"] = base_url
-    return rank_market_items(items, address, district, layout, ping, keyword)[:MAX_ITEMS]
+    return rank_market_items(items, address, district, layout, ping, keyword, building_type)[:MAX_ITEMS]
 
 
 def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | None]]:
@@ -208,7 +209,7 @@ def extract_591_title(block: str) -> str:
     alt_match = re.search(r'alt="(?P<alt>[^"]{4,240})"', block)
     if alt_match:
         alt = normalize_text(alt_match.group("alt"))
-        title = re.split(r"\s+(?:整層住家|獨立套房|分租套房|雅房|車位)\s+", alt)[0]
+        title = re.split(r"\s+(?:整層住家|獨立套房|分租套房|雅房|店面|辦公|住辦|車位)\s+", alt)[0]
         return clean_listing_title(title)
     return ""
 
@@ -261,7 +262,7 @@ def extract_591_location(block: str) -> str:
 
 def extract_591_layout(block: str, title: str) -> str:
     text = normalize_text(f"{title} {block}")
-    for label in ("整層住家", "獨立套房", "分租套房", "雅房", "車位"):
+    for label in ("整層住家", "獨立套房", "分租套房", "雅房", "店面", "辦公", "住辦", "車位"):
         if label in text:
             return label
     if "開放式" in text:
@@ -446,16 +447,18 @@ def rank_market_items(
     layout: str,
     ping: float | None,
     keyword: str = "",
+    building_type: str = "",
 ) -> list[dict[str, str | int | float | None]]:
     target_road = extract_road(address) or extract_road(keyword)
     compact_road = compact_address(target_road)
     compact_input = compact_address(address)
     target_district = normalize_address(district)
     target_layout = normalize_layout(layout)
+    target_type = normalize_property_type(building_type)
 
     scored: list[tuple[int, int, dict[str, str | int | float | None]]] = []
     for index, item in enumerate(items):
-        score = score_market_item(item, compact_road, compact_input, target_district, target_layout, ping)
+        score = score_market_item(item, compact_road, compact_input, target_district, target_layout, target_type, ping)
         scored.append((score, -index, item))
 
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -468,6 +471,7 @@ def score_market_item(
     compact_input: str,
     target_district: str,
     target_layout: str,
+    target_type: str,
     target_ping: float | None,
 ) -> int:
     title = normalize_address(str(item.get("title") or ""))
@@ -493,6 +497,13 @@ def score_market_item(
             score += 34
         elif same_room_count(target_layout, item_layout):
             score += 18
+
+    item_type = normalize_property_type(f"{item.get('layout') or ''} {title}")
+    if target_type:
+        if item_type == target_type:
+            score += 44
+        elif item_type:
+            score -= 28
 
     item_ping = item.get("ping")
     if target_ping and isinstance(item_ping, (int, float)) and item_ping > 0:
@@ -533,6 +544,10 @@ def clean_listing_title(value: str) -> str:
 
 def normalize_layout(value: str) -> str:
     text = normalize_text(value)
+    if "店面" in text or "商鋪" in text or "商舖" in text:
+        return "店面"
+    if "商辦" in text or "辦公" in text or "住辦" in text:
+        return "商辦"
     if "獨立套房" in text:
         return "獨立套房"
     if "分租套房" in text:
@@ -551,6 +566,10 @@ def normalize_layout(value: str) -> str:
 
 def infer_layout(title: str, location: str) -> str:
     text = f"{title} {location}"
+    if "店面" in text or "商鋪" in text or "商舖" in text:
+        return "店面"
+    if "商辦" in text or "辦公" in text or "住辦" in text:
+        return "商辦"
     if "獨立套房" in text:
         return "獨立套房"
     if "分租套房" in text:
@@ -564,6 +583,26 @@ def infer_layout(title: str, location: str) -> str:
         return f"{normalize_room_count(match.group(1))}房"
     if "套房" in text:
         return "套房"
+    return ""
+
+
+def normalize_property_type(value: str) -> str:
+    text = normalize_text(value)
+    if "店面" in text or "商鋪" in text or "商舖" in text:
+        return "店面"
+    if "商辦" in text or "辦公" in text or "住辦" in text or "辦公室" in text:
+        return "商辦"
+    if any(label in text for label in ("整層住家", "獨立套房", "分租套房", "雅房", "套房", "公寓", "華廈", "電梯大樓", "透天")):
+        return "住宅"
+    return ""
+
+
+def kind_for_building_type(building_type: str) -> str:
+    property_type = normalize_property_type(building_type)
+    if property_type == "店面":
+        return "5"
+    if property_type == "商辦":
+        return "6"
     return ""
 
 
@@ -601,11 +640,15 @@ class handler(BaseHTTPRequestHandler):
         district = first(params, "district")
         address = first(params, "address")
         layout = first(params, "layout")
+        building_type = first(params, "buildingType")
+        kind = first(params, "kind") or kind_for_building_type(building_type)
         ping = parse_float(first(params, "ping"))
         keyword = first(params, "keyword") or district or address
         list_params = {}
         if region:
             list_params["region"] = region
+        if kind:
+            list_params["kind"] = kind
         if keyword:
             list_params["keywords"] = keyword
         url = "https://rent.591.com.tw/list"
@@ -617,7 +660,7 @@ class handler(BaseHTTPRequestHandler):
         errors: dict[str, str] = {}
         try:
             html = fetch_text(url)
-            items = parse_591_items(html, url, address=address, district=district, layout=layout, ping=ping, keyword=keyword)
+            items = parse_591_items(html, url, address=address, district=district, layout=layout, ping=ping, keyword=keyword, building_type=building_type)
         except (TimeoutError, URLError, OSError) as exc:
             errors["591"] = str(exc)
 

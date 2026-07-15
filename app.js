@@ -257,12 +257,15 @@
     const rows = [];
     const keyword = buildSearchKeyword(currentCase);
     const region = data.cityRegions[currentCase.city] || "";
+    const kind = get591Kind(currentCase.buildingType);
     const params = new URLSearchParams({
       address: currentCase.address,
       city: currentCase.city,
       district: currentCase.district,
       keyword,
       region,
+      kind,
+      buildingType: currentCase.buildingType,
       layout: currentCase.layout,
       ping: currentCase.ping || "",
     });
@@ -476,15 +479,17 @@
     const address = buildMapAddress(currentCase);
     const keyword = buildSearchKeyword(currentCase);
     const encodedAddress = encodeURIComponent(address || "台北市");
-    const encodedKeyword = encodeURIComponent(keyword || address || "租屋");
     const region = data.cityRegions[currentCase.city];
+    const kind = get591Kind(currentCase.buildingType);
+    const rent591Params = new URLSearchParams();
+    if (region) rent591Params.set("region", region);
+    if (kind) rent591Params.set("kind", kind);
+    rent591Params.set("keywords", keyword || address || "租屋");
 
     els.mapsLink.href = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
     els.mapFrame.src = `https://maps.google.com/maps?q=${encodedAddress}&output=embed`;
     els.moiLink.href = "https://lvr.land.moi.gov.tw/";
-    els.rent591Link.href = region
-      ? `https://rent.591.com.tw/list?region=${region}&keywords=${encodedKeyword}`
-      : `https://rent.591.com.tw/list?keywords=${encodedKeyword}`;
+    els.rent591Link.href = `https://rent.591.com.tw/list?${rent591Params.toString()}`;
   }
 
   function buildSearchKeyword(currentCase) {
@@ -508,6 +513,12 @@
       parts.push(address);
     }
     return parts.join("");
+  }
+
+  function get591Kind(buildingType) {
+    if (buildingType === "店面") return "5";
+    if (buildingType === "商辦") return "6";
+    return "";
   }
 
   function setSourceStatus(message, level) {

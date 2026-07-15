@@ -56,6 +56,48 @@ def main() -> None:
     assert sorted_sample[0]["url"].endswith("/21500002"), sorted_sample
     assert sorted_sample[0]["address"] == "南區-永華南路", sorted_sample
 
+    commercial_html = """
+    <div class="item" data-id="21600001">
+      <a class="link v-middle" href="https://rent.591.com.tw/21600001" title="三房住宅近捷運">三房住宅近捷運</a>
+      <div>大安區-忠孝東路四段</div>
+      <span>32坪</span>
+      <div class="item-info-price"><div class="inline-flex-row">45,000</div><span>元/月</span></div>
+    </div>
+    <div class="item" data-id="21600002">
+      <a class="link v-middle" href="https://rent.591.com.tw/21600002" title="忠孝東路黃金店面">忠孝東路黃金店面</a>
+      <div>大安區-忠孝東路四段</div>
+      <span>20坪</span>
+      <div class="item-info-price"><div class="inline-flex-row">120,000</div><span>元/月</span></div>
+    </div>
+    <div class="item" data-id="21600003">
+      <a class="link v-middle" href="https://rent.591.com.tw/21600003" title="忠孝東路辦公室可登記">忠孝東路辦公室可登記</a>
+      <div>大安區-忠孝東路四段</div>
+      <span>28坪</span>
+      <div class="item-info-price"><div class="inline-flex-row">80,000</div><span>元/月</span></div>
+    </div>
+    """
+    store_sample = parse_591_items(
+        commercial_html,
+        "https://rent.591.com.tw/list?kind=5",
+        address="台北市大安區忠孝東路四段100號",
+        district="大安區",
+        ping=20,
+        keyword="大安區 忠孝東路四段",
+        building_type="店面",
+    )
+    assert store_sample[0]["url"].endswith("/21600002"), store_sample
+
+    office_sample = parse_591_items(
+        commercial_html,
+        "https://rent.591.com.tw/list?kind=6",
+        address="台北市大安區忠孝東路四段100號",
+        district="大安區",
+        ping=28,
+        keyword="大安區 忠孝東路四段",
+        building_type="商辦",
+    )
+    assert office_sample[0]["url"].endswith("/21600003"), office_sample
+
     url = "https://rent.591.com.tw/list?region=15&keywords=%E5%8D%97%E5%8D%80%20%E6%B0%B8%E8%8F%AF%E5%8D%97%E8%B7%AF"
     html = fetch_text(url)
     items = parse_591_items(html, url)
