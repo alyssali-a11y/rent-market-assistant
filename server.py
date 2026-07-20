@@ -66,7 +66,7 @@ class Handler(SimpleHTTPRequestHandler):
             errors["591"] = str(exc)
 
         try:
-            moi_items = parse_moi_rental_items(city, district, address, keyword, layout, ping)
+            moi_items = parse_moi_rental_items(city, district, address, keyword, layout, ping, building_type)
         except (TimeoutError, URLError, OSError, csv.Error, ValueError) as exc:
             errors["MOI"] = str(exc)
 

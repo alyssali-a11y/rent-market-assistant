@@ -131,6 +131,7 @@ def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | Non
         community = normalize_text(match.group("community"))
         location = extract_location(html, match.start(), match.end()) or community
         layout = normalize_text(match.group("layout")) or infer_layout(title, community)
+        property_type = infer_property_type(title, community, match.group("floor"), layout)
         ping = parse_float(match.group("ping"))
         rent = parse_int(match.group("rent"))
         if not title or not is_reasonable_monthly_rent(rent):
@@ -144,6 +145,7 @@ def parse_591_payload_items(html: str) -> list[dict[str, str | int | float | Non
                 "rent": rent,
                 "ping": ping,
                 "layout": layout,
+                "propertyType": property_type,
                 "url": f"https://rent.591.com.tw/{listing_id}",
                 "note": "591 搜尋頁刊登資料",
             }
@@ -168,6 +170,7 @@ def parse_591_card_items(html: str) -> list[dict[str, str | int | float | None]]
         ping = extract_591_ping(block)
         location = extract_591_location(block)
         layout = extract_591_layout(block, title)
+        property_type = extract_591_property_type(block, title)
         if not title or not is_reasonable_monthly_rent(rent):
             continue
 
@@ -179,6 +182,7 @@ def parse_591_card_items(html: str) -> list[dict[str, str | int | float | None]]
                 "rent": rent,
                 "ping": ping,
                 "layout": layout,
+                "propertyType": property_type,
                 "url": listing_url,
                 "note": "591 搜尋頁刊登資料",
             }
@@ -316,6 +320,11 @@ def extract_591_layout(block: str, title: str) -> str:
     return ""
 
 
+def extract_591_property_type(block: str, title: str) -> str:
+    attribute_values = re.findall(r'(?:alt|title)="([^"]{2,300})"', block, re.I)
+    return infer_property_type(title, *attribute_values, block)
+
+
 def parse_591_text_items(html: str) -> list[dict[str, str | int | float | None]]:
     text = normalize_text(html)
     pattern = re.compile(
@@ -345,6 +354,7 @@ def parse_591_text_items(html: str) -> list[dict[str, str | int | float | None]]
                 "rent": rent,
                 "ping": ping,
                 "layout": infer_layout(title, match.group("location")),
+                "propertyType": infer_property_type(title, match.group("location")),
                 "url": "",
                 "note": "591 搜尋頁文字資料",
             }
@@ -361,6 +371,7 @@ def parse_moi_rental_items(
     keyword: str,
     layout: str,
     ping: float | None,
+    building_type: str = "",
 ) -> list[dict[str, str | int | float | None]]:
     code = MOI_CITY_CODES.get(city) or MOI_CITY_CODES.get(city.replace("臺", "台"))
     if not code:
@@ -371,6 +382,7 @@ def parse_moi_rental_items(
     compact_road = compact_address(road)
     compact_input = compact_address(address)
     target_layout = normalize_layout(layout)
+    target_type = normalize_property_type(building_type)
     target_district = normalize_address(district)
     scored: list[tuple[int, int, dict[str, str | int | float | None]]] = []
 
@@ -383,6 +395,7 @@ def parse_moi_rental_items(
 
         row_compact = compact_address(row_address)
         row_layout = rental_layout(row)
+        row_property_type = infer_property_type(row.get("建物型態", ""), row_layout)
         rent = parse_int(row.get("總額元"))
         area_sqm = parse_float(row.get("建物總面積平方公尺"))
         row_ping = round(area_sqm / 3.305785, 1) if area_sqm else None
@@ -396,6 +409,8 @@ def parse_moi_rental_items(
             score += 40
         if target_layout and normalize_layout(row_layout) == target_layout:
             score += 22
+        if target_type and row_property_type:
+            score += property_type_score(target_type, row_property_type)
         if ping and row_ping:
             score += max(0, 24 - int(abs(row_ping - ping) * 2))
         if row_district == target_district:
@@ -415,6 +430,7 @@ def parse_moi_rental_items(
                     "rent": rent,
                     "ping": row_ping,
                     "layout": row_layout,
+                    "propertyType": row_property_type,
                     "url": MOI_QUERY_URL,
                     "note": build_moi_note(row),
                     "date": format_minguo_date(row.get("租賃年月日", "")),
@@ -547,12 +563,11 @@ def score_market_item(
         elif same_room_count(target_layout, item_layout):
             score += 18
 
-    item_type = normalize_property_type(f"{item.get('layout') or ''} {title}")
+    item_type = normalize_property_type(
+        f"{item.get('propertyType') or ''} {item.get('layout') or ''} {title}"
+    )
     if target_type:
-        if item_type == target_type:
-            score += 44
-        elif item_type:
-            score -= 28
+        score += property_type_score(target_type, item_type)
 
     item_ping = item.get("ping")
     if target_ping and isinstance(item_ping, (int, float)) and item_ping > 0:
@@ -635,15 +650,65 @@ def infer_layout(title: str, location: str) -> str:
     return ""
 
 
+def infer_property_type(*values: str) -> str:
+    text = normalize_text(" ".join(str(value or "") for value in values))
+    return normalize_property_type(text)
+
+
 def normalize_property_type(value: str) -> str:
     text = normalize_text(value)
     if "店面" in text or "商鋪" in text or "商舖" in text:
         return "店面"
     if "商辦" in text or "辦公" in text or "住辦" in text or "辦公室" in text:
         return "商辦"
-    if any(label in text for label in ("整層住家", "獨立套房", "分租套房", "雅房", "套房", "公寓", "華廈", "電梯大樓", "透天")):
+    if "透天" in text or "別墅" in text:
+        return "透天厝"
+    if any(label in text for label in ("電梯大樓", "住宅大樓", "大樓")):
+        return "電梯大樓"
+    if "華廈" in text:
+        return "華廈"
+    if "公寓" in text:
+        return "公寓"
+    if "獨立套房" in text:
+        return "獨立套房"
+    if "分租套房" in text:
+        return "分租套房"
+    if "雅房" in text:
+        return "雅房"
+    if "套房" in text:
+        return "套房"
+    if "整層住家" in text or "整層出租" in text:
+        return "整層住家"
+    if "車位" in text:
+        return "車位"
+    if "住宅" in text or re.search(r"[1-6一二三四五六兩]\s*房", text):
         return "住宅"
     return ""
+
+
+def property_type_score(target: str, candidate: str) -> int:
+    if not target or not candidate:
+        return 0
+    if target == candidate:
+        return 60
+
+    suite_types = {"套房", "獨立套房", "分租套房", "雅房"}
+    residential_types = {
+        "住宅",
+        "整層住家",
+        "電梯大樓",
+        "華廈",
+        "公寓",
+        "透天厝",
+        *suite_types,
+    }
+    if target in suite_types and candidate in suite_types:
+        return 32
+    if target in residential_types and candidate in residential_types:
+        if target in {"住宅", "整層住家"} or candidate in {"住宅", "整層住家"}:
+            return 12
+        return -18
+    return -70
 
 
 def kind_for_building_type(building_type: str) -> str:
@@ -714,7 +779,7 @@ class handler(BaseHTTPRequestHandler):
             errors["591"] = str(exc)
 
         try:
-            moi_items = parse_moi_rental_items(city, district, address, keyword, layout, ping)
+            moi_items = parse_moi_rental_items(city, district, address, keyword, layout, ping, building_type)
         except (TimeoutError, URLError, OSError, csv.Error, ValueError) as exc:
             errors["MOI"] = str(exc)
 

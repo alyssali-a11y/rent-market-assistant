@@ -282,7 +282,7 @@
         if (parsedRows.length || moiRows.length) {
           setSourceStatus(`已讀取 ${parsedRows.length} 筆 591 待租物件、${moiRows.length} 筆內政部租賃實價 Open Data。`, "good");
         } else {
-          setSourceStatus("已連線外部來源，但本次條件沒有整理出可比物件；可放寬路段、坪數或格局條件。", "warn");
+          setSourceStatus("已連線外部來源，但本次條件沒有整理出可比物件；可放寬路段、坪數或房屋型態條件。", "warn");
         }
       } else {
         setSourceStatus("本機外部資料服務未回應，請從右側開啟 591 與實價登錄查詢頁。", "warn");
@@ -309,6 +309,7 @@
       rent: parseNumber(item.rent),
       ping: parseNumber(item.ping),
       layout: item.layout || "",
+      propertyType: item.propertyType || item.buildingType || "",
       url: normalizeExternalUrl(item.url),
       note: item.note || "591 搜尋結果",
       pricePerPing: parseNumber(item.rent) && parseNumber(item.ping) ? Math.round(parseNumber(item.rent) / parseNumber(item.ping)) : null,
@@ -325,8 +326,9 @@
       rent: null,
       ping: null,
       layout: currentCase.layout || "不限",
+      propertyType: currentCase.buildingType || "不限",
       url: els.rent591Link.href,
-      note: "已嘗試讀取 591 外部來源；若沒有可比租金，請放寬路段、坪數或格局條件。",
+      note: "已嘗試讀取 591 外部來源；若沒有可比租金，請放寬路段、坪數或房屋型態條件。",
       pricePerPing: null,
       status: "待查",
     };
@@ -341,6 +343,7 @@
       rent: parseNumber(item.rent),
       ping: parseNumber(item.ping),
       layout: item.layout || "",
+      propertyType: item.propertyType || item.buildingType || "",
       url: normalizeExternalUrl(item.url || els.moiLink.href),
       date: item.date || "",
       note: item.note || "內政部租賃實價 Open Data",
@@ -358,6 +361,7 @@
       rent: null,
       ping: null,
       layout: currentCase.layout || "不限",
+      propertyType: currentCase.buildingType || "不限",
       url: els.moiLink.href,
       note: "已嘗試讀取內政部租賃實價 Open Data；若沒有成交案例，請放寬路段或行政區條件。",
       pricePerPing: null,
@@ -439,7 +443,7 @@
       return "輸入地址後，系統會先讀取 591 待租物件與內政部租賃實價 Open Data，現場以外部行情作為主要說法。";
     }
     if (!stats.low || !stats.high) {
-      return "目前尚未取得足夠的外部租金數字。建議先按右側 591 與內政部實價登錄連結，確認同路段、同格局、同坪數的租金，再對屋主說明要以外部公開行情為準。";
+      return "目前尚未取得足夠的外部租金數字。建議先按右側 591 與內政部實價登錄連結，確認同路段、同房屋型態、同坪數的租金，再對屋主說明要以外部公開行情為準。";
     }
 
     const band = `${formatMoney(roundToHundred(stats.low))} 到 ${formatMoney(roundToHundred(stats.high))}`;
@@ -471,7 +475,7 @@
           <td data-label="租金"><div class="cell-content cell-number">${rent}</div></td>
           <td data-label="坪數"><div class="cell-content cell-number">${ping}</div></td>
           <td data-label="單坪價"><div class="cell-content cell-number">${pricePerPing}</div></td>
-          <td data-label="格局"><div class="cell-content">${escapeHtml(item.layout || "－")}</div></td>
+          <td data-label="房屋型態"><div class="cell-content">${escapeHtml(item.propertyType || "未辨識")}</div></td>
           <td class="source-cell" data-label="來源"><div class="cell-content"><span class="source-badge ${sourceClass}">${escapeHtml(item.sourceLabel)}</span><small>${escapeHtml(item.note || "")}</small>${sourceAction}</div></td>
         </tr>
       `;

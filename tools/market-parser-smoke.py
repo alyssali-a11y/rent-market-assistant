@@ -30,6 +30,7 @@ def main() -> None:
     parsed_sample = parse_591_payload_items(sample_html)
     assert parsed_sample and parsed_sample[0]["rent"] == 20000, parsed_sample
     assert parsed_sample[0]["rent"] != 21528361, parsed_sample
+    assert parsed_sample[0]["propertyType"] == "整層住家", parsed_sample
 
     fallback_items = parse_591_items(
         "台南優質兩房 南區-永華南路 24坪 20,000元",
@@ -50,6 +51,7 @@ def main() -> None:
     assert business_items and business_items[0]["rent"] == 105000, business_items
     assert business_items[0]["url"] == "https://business.591.com.tw/rent/21631832", business_items
     assert business_items[0]["ping"] == 23.4, business_items
+    assert business_items[0]["propertyType"] == "店面", business_items
 
     sort_html = """
     <div class="item" data-id="21500001">
@@ -82,6 +84,29 @@ def main() -> None:
     )
     assert sorted_sample[0]["url"].endswith("/21500002"), sorted_sample
     assert sorted_sample[0]["address"] == "南區-永華南路", sorted_sample
+
+    property_type_html = """
+    <div class="item" data-id="21510001">
+      <a href="https://rent.591.com.tw/21510001" title="近捷運電梯大樓三房">近捷運電梯大樓三房</a>
+      <div>信義區-松仁路</div><span>30坪</span>
+      <div class="item-info-price"><strong>38,000</strong><span>元/月</span></div>
+    </div>
+    <div class="item" data-id="21510002">
+      <a href="https://rent.591.com.tw/21510002" title="整棟透天可住家">整棟透天可住家</a>
+      <div>信義區-松仁路</div><span>31坪</span>
+      <div class="item-info-price"><strong>36,000</strong><span>元/月</span></div>
+    </div>
+    """
+    property_type_sample = parse_591_items(
+        property_type_html,
+        "https://rent.591.com.tw/list",
+        address="台北市信義區松仁路100號",
+        district="信義區",
+        ping=31,
+        building_type="透天厝",
+    )
+    assert property_type_sample[0]["url"].endswith("/21510002"), property_type_sample
+    assert property_type_sample[0]["propertyType"] == "透天厝", property_type_sample
 
     commercial_html = """
     <div class="item" data-id="21600001">
@@ -130,8 +155,9 @@ def main() -> None:
 大安區,台北市大安區忠孝東路四段2號,22000,66.12,1150105,整層住家,住宅大樓,
 大安區,台北市大安區忠孝東路四段1號,21000,66.12,1150605,整層住家,住宅大樓,
 """
-    moi_sample = parse_moi_rental_items("台北市", "大安區", "忠孝東路四段", "", "整層住家", 20)
+    moi_sample = parse_moi_rental_items("台北市", "大安區", "忠孝東路四段", "", "整層住家", 20, "電梯大樓")
     assert [item["date"] for item in moi_sample] == ["2026/06/05", "2026/01/05"], moi_sample
+    assert all(item["propertyType"] == "電梯大樓" for item in moi_sample), moi_sample
     MOI_CSV_CACHE.pop(moi_cache_key, None)
 
     url = "https://rent.591.com.tw/list?region=15&keywords=%E5%8D%97%E5%8D%80%20%E6%B0%B8%E8%8F%AF%E5%8D%97%E8%B7%AF"
