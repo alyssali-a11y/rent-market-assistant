@@ -83,6 +83,7 @@
   const OCR_WARNING = "注意：線上辨識功能有限，請務必再次確認相關欄位後再送出！！";
   const SQM_TO_PING = 0.3025;
   const AREA_UNIT_PATTERN = "(?:平方公尺|㎡|m²|m2|M2|平方米)";
+  const BUILDING_LAYER_PATTERN = "(?:地下(?:[一二三四五六七八九十百0-9]+)?層|第?[一二三四五六七八九十百0-9]+層(?:之[一二三四五六七八九十百0-9]+)?|騎樓|夾層|屋頂突出物)";
   const ADDRESS_NUMBER_PATTERN = "[\\d一二三四五六七八九十百]+(?:之[\\d一二三四五六七八九十百]+)?號";
   const OCR_JOIN_LABELS = [
     "建物標示部",
@@ -779,9 +780,9 @@
 
   function renderAreaReviewRow(row, index) {
     const isParking = row.type === "parking";
-    const label = areaRowLabel(row.type);
+    const label = row.name || areaRowLabel(row.type);
     return `
-      <div class="area-review-row" data-sign="${row.sign}" data-type="${escapeHtml(row.type)}">
+      <div class="area-review-row" data-sign="${row.sign}" data-type="${escapeHtml(row.type)}" data-name="${escapeHtml(label)}">
         <label class="area-review-check">
           <input class="area-use" type="checkbox" checked />
           <span>${escapeHtml(label)}${isParking ? "（扣除）" : ""}</span>
@@ -816,9 +817,10 @@
       const denominator = parseNumber(row.querySelector(".area-denominator")?.value) || 1;
       const sign = Number(row.dataset.sign) || 1;
       const type = row.dataset.type || "common";
+      const name = row.dataset.name || areaRowLabel(type);
       const checked = row.querySelector(".area-use")?.checked;
       if (!checked || !sqm || denominator <= 0) return null;
-      return { type, sqm, numerator, denominator, sign };
+      return { type, name, sqm, numerator, denominator, sign };
     }).filter(Boolean);
   }
 
@@ -844,6 +846,7 @@
         const output = row.querySelector(".area-row-result");
         const item = {
           type: row.dataset.type || "common",
+          name: row.dataset.name || "",
           sign: Number(row.dataset.sign) || 1,
           sqm: parseNumber(row.querySelector(".area-sqm")?.value) || 0,
           numerator: parseNumber(row.querySelector(".area-numerator")?.value) || 1,
@@ -878,7 +881,7 @@
 
   function areaRowFormula(row) {
     const allocated = row.sqm * row.numerator / row.denominator;
-    const label = areaRowLabel(row.type);
+    const label = row.name || areaRowLabel(row.type);
     const fraction = row.numerator === 1 && row.denominator === 1 ? "" : ` × ${row.numerator} / ${row.denominator}`;
     const sign = row.sign < 0 ? "－" : "";
     return `${sign}${label} ${formatDecimal(row.sqm, 2)}${fraction} = ${sign}${formatDecimal(allocated, 2)} 平方公尺`;
@@ -1057,8 +1060,15 @@
   function buildAreaRows(text, compact) {
     const section = buildingMarkSection(text) || normalizeOcrText(text);
     const rows = [];
-    const mainAreas = extractMainAreas(section);
-    mainAreas.forEach((sqm) => rows.push({ type: "main", sqm, numerator: 1, denominator: 1, sign: 1 }));
+    const mainAreas = extractMainAreaEntries(section);
+    mainAreas.forEach((entry) => rows.push({
+      type: "main",
+      name: entry.name,
+      sqm: entry.sqm,
+      numerator: 1,
+      denominator: 1,
+      sign: 1,
+    }));
 
     extractAccessoryAreas(section).forEach((sqm) => {
       rows.push({ type: "accessory", sqm, numerator: 1, denominator: 1, sign: 1 });
@@ -1147,19 +1157,80 @@
     return uniqueNumbers(values).reduce((sum, value) => sum + value, 0);
   }
 
-  function extractMainAreas(section) {
+  function extractMainAreaEntries(section) {
     const target = subsection(section, /主建物(?:層次)?(?:面積)?/, /附屬建物|共有部分|共同使用部分|建物門牌|主要用途|建築完成|登記原因|所有權部/)
       || sectionUntil(section, /附屬建物|共有部分|共同使用部分|建築完成日期|其他登記事項|所有權部/);
     if (!target) return [];
 
+    const layerEntries = extractBuildingLayerEntries(target);
+    if (layerEntries.length) return layerEntries;
+
     const areas = areaValuesAfterLabel(target, "層次面積");
-    if (areas.length) return uniqueNumbers(areas);
+    if (areas.length) {
+      return areas.map((sqm, index) => ({
+        name: areas.length > 1 ? `主建物（第 ${index + 1} 筆）` : "主建物",
+        sqm,
+      }));
+    }
 
     const totalAreas = areaValuesAfterLabel(target, "總面積");
-    if (totalAreas.length) return [totalAreas[0]];
+    if (totalAreas.length) return [{ name: "主建物", sqm: totalAreas[0] }];
 
     const lines = normalizeOcrLines(target).filter((line) => !/總面積/.test(line));
-    return uniqueNumbers(areaValuesFromLines(lines));
+    return uniqueNumbers(areaValuesFromLines(lines)).map((sqm) => ({ name: "主建物", sqm }));
+  }
+
+  function extractBuildingLayerEntries(text) {
+    const normalized = normalizeOcrText(text);
+    const pattern = new RegExp(`(?<layer>${BUILDING_LAYER_PATTERN})`, "g");
+    const matches = [...normalized.matchAll(pattern)];
+    const entries = [];
+
+    matches.forEach((match, index) => {
+      const start = match.index + match[0].length;
+      const end = index + 1 < matches.length ? matches[index + 1].index : normalized.length;
+      const segment = normalized.slice(start, end);
+      const sqm = extractLayerSegmentArea(segment);
+      if (!sqm) return;
+      entries.push({ name: `主建物（${match.groups?.layer || match[0]}）`, sqm });
+    });
+
+    if (entries.length < matches.length && matches.length > 1) {
+      const areaScope = normalized.slice(matches[0].index);
+      const unitValues = [...areaScope.matchAll(new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*${AREA_UNIT_PATTERN}`, "g"))]
+        .map((item) => validAreaNumber(item[1]))
+        .filter(Boolean);
+      const decimalValues = [...areaScope.matchAll(/([0-9]+\.[0-9]+)/g)]
+        .map((item) => validAreaNumber(item[1]))
+        .filter(Boolean);
+      const orderedValues = unitValues.length === matches.length
+        ? unitValues
+        : (decimalValues.length === matches.length ? decimalValues : []);
+      if (orderedValues.length === matches.length) {
+        return matches.map((match, index) => ({
+          name: `主建物（${match.groups?.layer || match[0]}）`,
+          sqm: orderedValues[index],
+        }));
+      }
+    }
+
+    return entries;
+  }
+
+  function extractLayerSegmentArea(segment) {
+    const labeled = segment.match(new RegExp(`層次面積[^0-9]{0,60}([0-9]+(?:\\.[0-9]+)?)(?:\\s*${AREA_UNIT_PATTERN})?`));
+    if (labeled) return validAreaNumber(labeled[1]);
+
+    const unitArea = segment.match(new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*${AREA_UNIT_PATTERN}`));
+    if (unitArea) return validAreaNumber(unitArea[1]);
+
+    const decimalArea = segment.match(/([0-9]+\.[0-9]+)/);
+    return decimalArea ? validAreaNumber(decimalArea[1]) : null;
+  }
+
+  function validAreaNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 && number < 10000 ? number : null;
   }
 
   function extractAccessoryAreas(section) {

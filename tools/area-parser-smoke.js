@@ -95,6 +95,29 @@ const unsafeTotalOnly = `
 共有部分
 `;
 
+const multiStoryText = `
+新北市板橋地政事務所
+建物標示部
+建物門牌 新北市板橋區文化路一段100號
+層次 總面積 層次面積 主要用途
+一層 42.10 平方公尺 住家用
+二層 42.10 平方公尺 住家用
+三層 35.80 平方公尺 住家用
+附屬建物 用途 面積
+陽台 5.00 平方公尺
+共有部分
+建號 總面積 權利範圍
+0001-0000 1000.00 平方公尺 權利範圍 10000分之200
+`;
+
+const columnOrderedMultiStoryText = `
+建物標示部
+建物門牌 新北市板橋區文化路一段100號
+層次 一層 二層 三層
+層次面積 30.00 30.00 20.00
+主要用途 住家用 住家用 住家用
+`;
+
 const api = context.__areaTest;
 const first = api.extractRecognizedFields(mixedTableText, "桃園市平鎮區謄本.pdf");
 approx(first.sqm, 73.22, "mixed table sqm");
@@ -126,6 +149,22 @@ if (unsafe.ping) {
   throw new Error(`unsafe total should not produce ping, got ${unsafe.ping}`);
 }
 
+const multiStory = api.extractRecognizedFields(multiStoryText, "新北市板橋區透天謄本.pdf");
+approx(multiStory.sqm, 145, "multi-story sqm");
+const multiStoryMainRows = multiStory.areaRows.filter((row) => row.type === "main");
+if (multiStoryMainRows.length !== 3) {
+  throw new Error(`multi-story main rows: expected 3, got ${multiStoryMainRows.length}`);
+}
+if (multiStoryMainRows.filter((row) => row.sqm === 42.1).length !== 2) {
+  throw new Error(`same-size floors were incorrectly deduplicated: ${JSON.stringify(multiStoryMainRows)}`);
+}
+
+const columnOrdered = api.extractRecognizedFields(columnOrderedMultiStoryText, "板橋區透天謄本.pdf");
+approx(columnOrdered.sqm, 80, "column-ordered multi-story sqm");
+if (columnOrdered.areaRows.filter((row) => row.type === "main").length !== 3) {
+  throw new Error(`column-ordered floors were not paired: ${JSON.stringify(columnOrdered.areaRows)}`);
+}
+
 console.log(JSON.stringify({
   mixedPing: first.ping,
   mixedFormula: first.formula,
@@ -133,4 +172,7 @@ console.log(JSON.stringify({
   taichungAddress: third.address,
   taichungRows: third.areaRows.length,
   unsafePing: unsafe.ping,
+  multiStorySqm: multiStory.sqm,
+  multiStoryMainRows,
+  columnOrderedSqm: columnOrdered.sqm,
 }, null, 2));
