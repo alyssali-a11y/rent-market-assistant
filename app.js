@@ -207,7 +207,7 @@
   function parseAddress(address) {
     const result = { city: "", district: "" };
     const normalizedAddress = normalizeAddress(address);
-    const city = CITY_NAMES.find((item) => normalizedAddress.includes(item));
+    const city = CITY_NAMES.find((item) => normalizedAddress.includes(normalizeAddress(item)));
     if (city) result.city = city;
     const district = DISTRICT_NAMES.find((item) => normalizedAddress.includes(item));
     if (district) {
@@ -512,19 +512,39 @@
   }
 
   function buildMapAddress(currentCase) {
-    const address = currentCase.address || "";
+    const address = sanitizeMapAddress(currentCase.address || "");
     const normalizedAddress = normalizeAddress(address);
-    const parts = [];
-    if (currentCase.city && !normalizedAddress.includes(normalizeAddress(currentCase.city))) {
-      parts.push(currentCase.city);
+    const parsed = parseAddress(address);
+    const city = parsed.city || currentCase.city || "";
+    const district = parsed.district || currentCase.district || "";
+    const parts = ["台灣"];
+    if (city && !normalizedAddress.includes(normalizeAddress(city))) {
+      parts.push(city);
     }
-    if (currentCase.district && !normalizedAddress.includes(normalizeAddress(currentCase.district))) {
-      parts.push(currentCase.district);
+    if (district && !normalizedAddress.includes(normalizeAddress(district))) {
+      parts.push(district);
     }
     if (address) {
       parts.push(address);
     }
     return parts.join("");
+  }
+
+  function sanitizeMapAddress(value) {
+    let address = String(value || "")
+      .replace(/臺/g, "台")
+      .replace(/^\s*\d{3,6}\s*(?=[\u4e00-\u9fff]{2,4}(?:市|縣))/, "")
+      .replace(/[，,。]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const numberedAddress = address.match(/^(.+?[\d一二三四五六七八九十百]+(?:之[\d一二三四五六七八九十百]+)?號(?:之[\d一二三四五六七八九十百]+)?)/);
+    if (numberedAddress) {
+      return numberedAddress[1].replace(/\s+/g, "");
+    }
+
+    address = address.replace(/(?:地下\s*[\d一二三四五六七八九十百]+樓|[\d一二三四五六七八九十百]+樓(?:之[\d一二三四五六七八九十百]+)?|[\d]+\s*[Ff]|[\d一二三四五六七八九十百]+室).*$/, "");
+    return address.replace(/\s+/g, "").trim();
   }
 
   function get591Kind(buildingType) {
